@@ -19,6 +19,13 @@ from category_utils import get_category
 def safe_read_csv(file_obj, filename):
     import io
     content = file_obj.read()
+    
+    # Debug hook: dump the raw file to disk
+    try:
+        with open('scratch/raw_' + filename.replace('.csv', '.txt'), 'wb') as dbg:
+            dbg.write(content)
+    except Exception as e:
+        pass
     if not content:
         return pd.DataFrame()
     
@@ -34,7 +41,6 @@ def safe_read_csv(file_obj, filename):
             text_stream = io.TextIOWrapper(stream, encoding=encoding, errors='ignore')
             for _ in range(50):
                 line = text_stream.readline().strip().lower()
-                if not line: continue
                 # Look for characteristic GA4/Search Console headers
                 if line.startswith('search term') or line.startswith('"search term"') or \
                    line.startswith('query') or line.startswith('"query"'):
@@ -52,27 +58,25 @@ def safe_read_csv(file_obj, filename):
     stream.seek(0)
     try:
         # Standard fast read
-        df = pd.read_csv(stream, skiprows=header_idx)
+        df = pd.read_csv(stream, skiprows=header_idx, index_col=False)
     except Exception as e:
         app.logger.warning(f"Standard in-memory read failed for {filename}, trying robust read: {str(e)}")
         stream.seek(0)
-        df = pd.read_csv(stream, sep=None, engine='python', on_bad_lines='skip', skiprows=header_idx)
+        df = pd.read_csv(stream, sep=None, engine='python', on_bad_lines='skip', skiprows=header_idx, index_col=False)
         
-    # Standardize column names
+    # Standardize column names (case insensitive)
     col_map = {
-        'Search term': 'search_term',
+        'search term': 'search_term',
         'query': 'query',
-        'Event count': 'a2c_count',
-        'Total users': 'purchasers',
-        'Purchasers': 'purchasers'
+        'event count': 'a2c_count'
     }
-    df.rename(columns=lambda x: col_map.get(str(x).strip().strip('"'), str(x).strip().strip('"')), inplace=True)
+    df.rename(columns=lambda x: col_map.get(str(x).strip().strip('"').lower(), str(x).strip().strip('"')), inplace=True)
     
     # Handle the duplicate columns issue
     if 'a2c_count' in df.columns and isinstance(df['a2c_count'], pd.DataFrame):
         df['a2c_count'] = df['a2c_count'].iloc[:, 0]
-    if 'purchasers' in df.columns and isinstance(df['purchasers'], pd.DataFrame):
-        df['purchasers'] = df['purchasers'].iloc[:, 0]
+    if 'orders' in df.columns and isinstance(df['orders'], pd.DataFrame):
+        df['orders'] = df['orders'].iloc[:, 0]
         
     return df
 
@@ -81,7 +85,9 @@ def clean_and_normalize(df, term_col):
         return pd.DataFrame(columns=[term_col, 'term_norm'])
     # Skip metadata rows where term is null or contains "total"
     df = df.dropna(subset=[term_col])
-    df = df[~df[term_col].astype(str).str.lower().str.contains('total', na=False)]
+    
+    # User Fix 1: Skip grand total rows, empty, null
+    df = df[~df[term_col].astype(str).str.strip().isin(['', 'null', 'Grand total', 'total'])]
     
     # Normalize: lowercase and strip
     df['term_norm'] = df[term_col].astype(str).str.lower().str.strip()
@@ -94,7 +100,7 @@ def aggregate_duplicates(df, numeric_cols):
     # Keep the original term_norm as index
     return df.groupby('term_norm').agg(agg_dict).reset_index()
 
-def process_period_files(search_df, a2c_df, purchase_df):
+def process_period_files(search_df, a2c_df):
     if search_df is None or search_df.empty:
         return pd.DataFrame()
         
@@ -103,31 +109,43 @@ def process_period_files(search_df, a2c_df, purchase_df):
     search_df = aggregate_duplicates(search_df, search_num_cols)
     
     if a2c_df is not None and not a2c_df.empty:
-        a2c_df = clean_and_normalize(a2c_df, 'search_term')
-        if not a2c_df.empty:
-            a2c_df = aggregate_duplicates(a2c_df, ['a2c_count'])
+        # User defined A2C processing
+        if 'search_term' in a2c_df.columns:
+            a2c_df = a2c_df[a2c_df['search_term'].notna()]
+            a2c_df = a2c_df[~a2c_df['search_term'].astype(str).str.strip().isin(['', 'null', 'Grand total', 'total'])]
+            a2c_df['term_norm'] = a2c_df['search_term'].astype(str).str.lower().str.strip()
+            
+            # Make sure a2c_count is numeric so groupby sum works mathematically
+            if 'a2c_count' in a2c_df.columns:
+                if a2c_df['a2c_count'].dtype == object:
+                    a2c_df['a2c_count'] = a2c_df['a2c_count'].apply(lambda x: pd.to_numeric(str(x).replace(',', ''), errors='coerce')).fillna(0)
+                a2c_df = a2c_df.groupby('term_norm', as_index=False)['a2c_count'].sum()
+            else:
+                a2c_df = pd.DataFrame(columns=['term_norm', 'a2c_count'])
         else:
-            a2c_df = pd.DataFrame(columns=['term_norm', 'a2c_count'])
+            # Fallback if A2C data used a different column like query
+            if 'query' in a2c_df.columns:
+                a2c_df['search_term'] = a2c_df['query']
+                a2c_df = a2c_df[a2c_df['search_term'].notna()]
+                a2c_df = a2c_df[~a2c_df['search_term'].astype(str).str.strip().isin(['', 'null', 'Grand total', 'total'])]
+                a2c_df['term_norm'] = a2c_df['search_term'].astype(str).str.lower().str.strip()
+                if 'a2c_count' in a2c_df.columns:
+                    if a2c_df['a2c_count'].dtype == object:
+                        a2c_df['a2c_count'] = a2c_df['a2c_count'].apply(lambda x: pd.to_numeric(str(x).replace(',', ''), errors='coerce')).fillna(0)
+                    a2c_df = a2c_df.groupby('term_norm', as_index=False)['a2c_count'].sum()
+                else:
+                    a2c_df = pd.DataFrame(columns=['term_norm', 'a2c_count'])
+            else:
+                a2c_df = pd.DataFrame(columns=['term_norm', 'a2c_count'])
     else:
         a2c_df = pd.DataFrame(columns=['term_norm', 'a2c_count'])
-        
-    if purchase_df is not None and not purchase_df.empty:
-        purchase_df = clean_and_normalize(purchase_df, 'search_term')
-        if not purchase_df.empty:
-            purchase_df = aggregate_duplicates(purchase_df, ['purchasers'])
-        else:
-            purchase_df = pd.DataFrame(columns=['term_norm', 'purchasers'])
-    else:
-        purchase_df = pd.DataFrame(columns=['term_norm', 'purchasers'])
         
     # Extra safety guard: ensure term_norm exists in all before merge
     if 'term_norm' not in search_df.columns: search_df['term_norm'] = []
     if 'term_norm' not in a2c_df.columns: a2c_df['term_norm'] = []
-    if 'term_norm' not in purchase_df.columns: purchase_df['term_norm'] = []
         
-    # Join the three
+    # Join the two
     merged = pd.merge(search_df, a2c_df, on='term_norm', how='left')
-    merged = pd.merge(merged, purchase_df, on='term_norm', how='left')
     
     # Fill NAs
     merged.fillna(0, inplace=True)
@@ -152,14 +170,12 @@ def upload():
     try:
         search_curr = safe_read_csv(files['search_terms_current'], 'search_terms_current.csv') if 'search_terms_current' in files else None
         a2c_curr = safe_read_csv(files['a2c_current'], 'a2c_current.csv') if 'a2c_current' in files else None
-        purch_curr = safe_read_csv(files['purchase_current'], 'purchase_current.csv') if 'purchase_current' in files else None
         
         search_prev = safe_read_csv(files['search_terms_previous'], 'search_terms_previous.csv') if 'search_terms_previous' in files else None
         a2c_prev = safe_read_csv(files['a2c_previous'], 'a2c_previous.csv') if 'a2c_previous' in files else None
-        purch_prev = safe_read_csv(files['purchase_previous'], 'purchase_previous.csv') if 'purchase_previous' in files else None
 
-        df_curr = process_period_files(search_curr, a2c_curr, purch_curr)
-        df_prev = process_period_files(search_prev, a2c_prev, purch_prev)
+        df_curr = process_period_files(search_curr, a2c_curr)
+        df_prev = process_period_files(search_prev, a2c_prev)
         
         # Call the logic engines
         kpis   = layer12_logic.run_kpis(df_curr, df_prev)
@@ -172,11 +188,11 @@ def upload():
         top_cats = df_curr.groupby('category')['searches'].sum().sort_values(ascending=False).head(5).index.tolist()
         zero_a2c = df_curr[(df_curr['a2c_count'] == 0) & (df_curr['search_visits'] >= 200)] \
             .sort_values('search_visits', ascending=False).head(30)
-        zero_conv = df_curr[(df_curr['purchasers'] == 0) & (df_curr['searches'] >= 1000)] \
+        zero_conv = df_curr[(df_curr['orders'] == 0) & (df_curr['searches'] >= 1000)] \
             .sort_values('searches', ascending=False).head(25)
 
         trends_inputs = {
-            'top_terms':       top_terms[['term_norm','searches','a2c_count','purchasers','category']].to_dict(orient='records'),
+            'top_terms':       top_terms[['term_norm','searches','a2c_count','orders','category']].to_dict(orient='records'),
             'top_categories':  top_cats,
             'zero_a2c_terms':  zero_a2c[['term_norm','searches','search_visits']].to_dict(orient='records'),
             'zero_conv_terms': zero_conv[['term_norm','searches','category']].to_dict(orient='records'),

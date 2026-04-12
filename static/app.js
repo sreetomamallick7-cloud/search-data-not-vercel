@@ -187,7 +187,7 @@ function DrillModal({ title, terms, onClose }) {
         <div className="overflow-y-auto flex-1">
           <table className="min-w-full text-xs">
             <thead className="sticky top-0 bg-gray-50">
-              <tr><th className="px-4 py-2 text-left text-gray-500">#</th><th className="px-4 py-2 text-left text-gray-500">Term</th><th className="px-4 py-2 text-right text-gray-500">Searches</th><th className="px-4 py-2 text-right text-gray-500">A2C</th><th className="px-4 py-2 text-right text-gray-500">Purchases</th></tr>
+              <tr><th className="px-4 py-2 text-left text-gray-500">#</th><th className="px-4 py-2 text-left text-gray-500">Term</th><th className="px-4 py-2 text-right text-gray-500">Searches</th><th className="px-4 py-2 text-right text-gray-500">A2C</th><th className="px-4 py-2 text-right text-gray-500">Orders</th></tr>
             </thead>
             <tbody>
               {(terms || []).map((t, i) => (
@@ -196,7 +196,7 @@ function DrillModal({ title, terms, onClose }) {
                   <td className="px-4 py-2 font-medium text-gray-800">{t.term_norm}</td>
                   <td className="px-4 py-2 text-right">{fmt(t.searches)}</td>
                   <td className="px-4 py-2 text-right">{fmt(t.a2c_count)}</td>
-                  <td className="px-4 py-2 text-right">{fmt(t.purchasers)}</td>
+                  <td className="px-4 py-2 text-right">{fmt(t.orders)}</td>
                 </tr>
               ))}
               {(terms || []).length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No term data available</td></tr>}
@@ -428,7 +428,7 @@ function Layer2({ layer2 }) {
                 { key:'category', label:'Category' },
                 { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
                 { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-                { key:'purchasers', label:'Purchases', right:true, render:v=>fmt(v) },
+                { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
               ]} rows={d27.terms||[]} />
             </Card>
           </>
@@ -442,7 +442,7 @@ function Layer2({ layer2 }) {
               { key:'term_count', label:'Terms', right:true },
               { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
               { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-              { key:'purchasers', label:'Purchases', right:true, render:v=>fmt(v) },
+              { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
               { key:'a2c_rate', label:'A2C Rate', right:true, render:v=>fmtN(v,2)+'%' },
             ]} rows={(d28.gems||[]).map(r => ({...r, _onClick:()=>setDrill({title: r.gemstone+' — Terms', terms: r.terms||[]})}))} />
           </Card>
@@ -496,13 +496,13 @@ function Layer2({ layer2 }) {
               labels={(d211.by_category||[]).map(d=>d.category)}
               data={(d211.by_category||[]).map(d=>d.new_terms||0)}
               height={260}
-              onClickIndex={i => { const row=(d211.by_category||[])[i]; if(row) setDrill({title:row.category+' New Terms', terms:(row.terms||[]).map(t=>({term_norm:t.term_norm, searches:t.searches, a2c_count:0, purchasers:0}))}); }}
+              onClickIndex={i => { const row=(d211.by_category||[])[i]; if(row) setDrill({title:row.category+' New Terms', terms:(row.terms||[]).map(t=>({term_norm:t.term_norm, searches:t.searches, a2c_count:0, orders:0}))}); }}
             />
             <DataTable maxH={240} cols={[
               { key:'category', label:'Category' },
               { key:'new_terms', label:'New Terms', right:true, render:v=>fmt(v) },
               { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-            ]} rows={(d211.by_category||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' New Terms', terms:(r.terms||[]).map(t=>({term_norm:t.term_norm, searches:t.searches, a2c_count:0, purchasers:0}))})})) } />
+            ]} rows={(d211.by_category||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' New Terms', terms:(r.terms||[]).map(t=>({term_norm:t.term_norm, searches:t.searches, a2c_count:0, orders:0}))})})) } />
           </Card>
         )}
 
@@ -577,7 +577,7 @@ function Layer1({ layer1 }) {
     { key:'term_norm', label:'Term' },
     { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
     { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-    { key:'purchasers', label:'Purchases', right:true, render:v=>fmt(v) },
+    { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
     { key:'category', label:'Category' },
   ];
 
@@ -631,7 +631,7 @@ function Layer1({ layer1 }) {
                 <div key={i} className="bg-indigo-50 rounded-lg p-3 text-center"><p className="text-2xl font-bold text-indigo-700">{k.value}</p><p className="text-xs text-indigo-500 mt-1">{k.label}</p></div>
               ))}
             </div>
-            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'purchasers',label:'Purchases',right:true,render:v=>fmt(v)}]} rows={d15.top_terms||[]} />
+            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'orders',label:'Orders',right:true,render:v=>fmt(v)}]} rows={d15.top_terms||[]} />
           </Card>
         )}
         {activeSection === '1.6' && (
@@ -641,7 +641,7 @@ function Layer1({ layer1 }) {
                 <div key={i} className="border border-gray-200 rounded-lg overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-2 bg-gray-50 cursor-pointer hover:bg-indigo-50" onClick={()=>setDrill({title:cluster.occasion+' — Terms',terms:cluster.terms||[]})}>
                     <span className="font-semibold text-sm text-gray-800">{cluster.occasion}</span>
-                    <div className="flex gap-4 text-xs text-gray-500"><span>🔍 {fmt(cluster.searches)}</span><span>🛒 {fmt(cluster.a2c_count)}</span><span>✅ {fmt(cluster.purchasers)}</span><span className="text-indigo-600 text-xs">drill →</span></div>
+                    <div className="flex gap-4 text-xs text-gray-500"><span>🔍 {fmt(cluster.searches)}</span><span>🛒 {fmt(cluster.a2c_count)}</span><span>✅ {fmt(cluster.orders)}</span><span className="text-indigo-600 text-xs">drill →</span></div>
                   </div>
                   <div className="px-4 py-2 flex flex-wrap gap-2">{(cluster.terms||[]).map((t,j)=><span key={j} className="bg-indigo-50 text-indigo-700 text-xs px-2 py-1 rounded-full">{t.term_norm} ({fmt(t.searches)})</span>)}</div>
                 </div>
@@ -671,17 +671,17 @@ function Layer1({ layer1 }) {
         )}
         {activeSection === '1.10' && (
           <Card title="1.10 · Falling Terms (<-20% MoM)" insight={d110.insight} insightType="danger">
-            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'prev_searches',label:'Prev',right:true,render:v=>fmt(v)},{key:'searches',label:'Current',right:true,render:v=>fmt(v)},{key:'growth',label:'Decline',right:true,render:v=><GrowthPill v={v}/>},{key:'purchasers',label:'Purchases',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d110.terms||[]} />
+            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'prev_searches',label:'Prev',right:true,render:v=>fmt(v)},{key:'searches',label:'Current',right:true,render:v=>fmt(v)},{key:'growth',label:'Decline',right:true,render:v=><GrowthPill v={v}/>},{key:'orders',label:'Orders',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d110.terms||[]} />
           </Card>
         )}
         {activeSection === '1.11' && (
           <Card title="1.11 · New Term Appearances" badge="Not in prev period" insight={d111.insight} insightType="success">
-            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'purchasers',label:'Purchases',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d111.terms||[]} />
+            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'orders',label:'Orders',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d111.terms||[]} />
           </Card>
         )}
         {activeSection === '1.12' && (
           <Card title="1.12 · Vanishing Terms (had revenue, now gone)" insight={d112.insight} insightType="danger">
-            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'prev_searches',label:'Prev Searches',right:true,render:v=>fmt(v)},{key:'searches',label:'Current',right:true,render:v=>fmt(v)},{key:'purchasers',label:'Prev Purchases',right:true,render:v=>fmt(v)}]} rows={d112.terms||[]} />
+            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'prev_searches',label:'Prev Searches',right:true,render:v=>fmt(v)},{key:'searches',label:'Current',right:true,render:v=>fmt(v)},{key:'orders',label:'Prev Orders',right:true,render:v=>fmt(v)}]} rows={d112.terms||[]} />
           </Card>
         )}
         {activeSection === '1.13' && (
@@ -743,10 +743,10 @@ function FunnelScatter({ points, height = 300 }) {
 
 function StageBadge({ stage }) {
   const s = {
-    'Stage 1 — No Click': 'bg-rose-100 text-rose-700',
-    'Stage 2 — No Cart':  'bg-amber-100 text-amber-700',
-    'Stage 3 — No Buy':   'bg-orange-100 text-orange-700',
-    'Healthy':            'bg-emerald-100 text-emerald-700'
+    'Stage 1 — Low Click-Through': 'bg-rose-100 text-rose-700',
+    'Stage 2 — Low Cart Rate':     'bg-amber-100 text-amber-700',
+    'Stage 3 — High Abandonment':  'bg-orange-100 text-orange-700',
+    'Healthy':                     'bg-emerald-100 text-emerald-700'
   };
   return <span className={`text-xs px-2 py-0.5 rounded font-semibold ${s[stage] || 'bg-gray-100 text-gray-500'}`}>{stage}</span>;
 }
@@ -761,7 +761,19 @@ function DeltaRatePill({ v }) {
 function Layer3({ layer3 }) {
   const [active, setActive] = useState('3.1');
   const [stageFilter, setStageFilter] = useState('All');
+  const [drill, setDrill] = useState(null);
   const hasBoth = !!(layer3?.['3.11']?.improvers?.length);
+
+  // Helper: click a category cell to drill into terms of that category
+  function catDrill(cat, terms) {
+    const filtered = (terms || []).filter(t => t.category === cat);
+    setDrill({ title: cat + ' — Terms', terms: filtered });
+  }
+
+  // Category column with clickable badge
+  function catCol(terms) {
+    return { key: 'category', label: 'Category', render: v => v ? <button onClick={() => catDrill(v, terms)} className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-full font-medium transition-colors">{v} →</button> : null };
+  }
 
   const sections = [
     { id: '3.1',  label: '3.1 Visit Rate',      both: false },
@@ -852,7 +864,7 @@ function Layer3({ layer3 }) {
                   { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
                   { key:'search_visits',label:'Visits', right:true, render:v=>fmt(v) },
                   { key:'visit_rate',   label:'Visit Rate', right:true, render:v=><span className="text-rose-600 font-semibold">{fmtN(v*100,1)}%</span> },
-                  { key:'category',     label:'Category' },
+                  catCol(d31.bottom20||[]),
                 ]} rows={d31.bottom20||[]} />
               </Card>
             </>
@@ -882,9 +894,9 @@ function Layer3({ layer3 }) {
                 { key:'term_norm',    label:'Term' },
                 { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
                 { key:'a2c_count',    label:'A2C', right:true, render:v=>fmt(v) },
-                { key:'purchasers',   label:'Purchases', right:true, render:v=>fmt(v) },
+                { key:'orders',   label:'Orders', right:true, render:v=>fmt(v) },
                 { key:'purchase_rate',label:'Purchase Rate', right:true, render:v=><span className={`text-xs font-semibold ${(v||0)>0.5?'text-emerald-600':(v||0)>0.2?'text-amber-600':'text-rose-600'}`}>{fmtN((v||0)*100,1)}%</span> },
-                { key:'category',     label:'Category' },
+                catCol(d33.terms||[]),
               ]} rows={d33.terms||[]} />
             </Card>
           );
@@ -893,13 +905,14 @@ function Layer3({ layer3 }) {
         {/* 3.4 */}
         {active === '3.4' && (() => {
           const d34 = d('3.4');
+          const allRows34 = [...(d34.top20||[]), ...(d34.bottom20||[])];
           const cols = [
             { key:'term_norm',  label:'Term' },
             { key:'searches',   label:'Searches', right:true, render:v=>fmt(v) },
             { key:'visit_rate', label:'Visit %', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
             { key:'a2c_rate_s', label:'A2C %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
             { key:'e2e_conv',   label:'E2E Conv', right:true, render:v=><span className="font-semibold text-indigo-700">{fmtN((v||0)*100,3)}%</span> },
-            { key:'category',   label:'Category' },
+            catCol(allRows34),
           ];
           return (
             <>
@@ -941,8 +954,8 @@ function Layer3({ layer3 }) {
                 { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
                 { key:'search_visits',label:'Visits', right:true, render:v=>fmt(v) },
                 { key:'a2c_count',    label:'A2C', right:true, render:v=><span className="font-semibold text-amber-700">{fmt(v)}</span> },
-                { key:'purchasers',   label:'Purchases', right:true, render:v=><span className="text-rose-600 font-bold">{fmt(v)}</span> },
-                { key:'category',     label:'Category' },
+                { key:'orders',   label:'Orders', right:true, render:v=><span className="text-rose-600 font-bold">{fmt(v)}</span> },
+                catCol(d36.terms||[]),
               ]} rows={d36.terms||[]} />
             </Card>
           );
@@ -958,7 +971,7 @@ function Layer3({ layer3 }) {
                 { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
                 { key:'search_visits',label:'Visits', right:true, render:v=><span className="font-semibold text-amber-700">{fmt(v)}</span> },
                 { key:'a2c_count',    label:'A2C', right:true, render:v=><span className="text-rose-600 font-bold">{fmt(v)}</span> },
-                { key:'category',     label:'Category' },
+                catCol(d37.terms||[]),
               ]} rows={d37.terms||[]} />
             </Card>
           );
@@ -991,7 +1004,7 @@ function Layer3({ layer3 }) {
                   { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
                   { key:'search_visits',label:'Visits', right:true, render:v=>fmt(v) },
                   { key:'a2c_count',    label:'A2C', right:true, render:v=>fmt(v) },
-                  { key:'category',     label:'Category' },
+                  catCol(d38.terms||[]),
                 ]} rows={d38.terms||[]} />
               </Card>
             </>
@@ -1001,7 +1014,7 @@ function Layer3({ layer3 }) {
         {/* 3.9 */}
         {active === '3.9' && (() => {
           const d39 = d('3.9');
-          const stages = ['All', 'Stage 1 — No Click', 'Stage 2 — No Cart', 'Stage 3 — No Buy', 'Healthy'];
+          const stages = ['All', 'Stage 1 — Low Click-Through', 'Stage 2 — Low Cart Rate', 'Stage 3 — High Abandonment', 'Healthy'];
           const filtered = stageFilter === 'All' ? (d39.terms||[]) : (d39.terms||[]).filter(t => t.funnel_stage === stageFilter);
           return (
             <>
@@ -1028,7 +1041,7 @@ function Layer3({ layer3 }) {
                   { key:'a2c_rate_v',   label:'A2C/Visit', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
                   { key:'purchase_rate',label:'Purch/A2C', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
                   { key:'funnel_stage', label:'Stage', render:v=><StageBadge stage={v} /> },
-                  { key:'category',     label:'Category' },
+                  catCol(filtered),
                 ]} rows={filtered} maxH={400} />
               </Card>
             </>
@@ -1049,10 +1062,10 @@ function Layer3({ layer3 }) {
               <DataTable cols={[
                 { key:'term_norm',  label:'Term' },
                 { key:'a2c_count',  label:'A2C', right:true, render:v=>fmt(v) },
-                { key:'purchasers', label:'Purchases', right:true, render:v=>fmt(v) },
+                { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
                 { key:'a2c_abandon',label:'Abandoned Carts', right:true, render:v=><span className="font-semibold text-rose-600">{fmt(v)}</span> },
                 { key:'searches',   label:'Searches', right:true, render:v=>fmt(v) },
-                { key:'category',   label:'Category' },
+                catCol(d310.terms||[]),
               ]} rows={d310.terms||[]} />
             </Card>
           );
@@ -1061,13 +1074,14 @@ function Layer3({ layer3 }) {
         {/* 3.11 */}
         {active === '3.11' && (() => {
           const d311 = d('3.11');
+          const allRows311 = [...(d311.improvers||[]), ...(d311.degraders||[])];
           const cols = [
             { key:'term_norm', label:'Term' },
             { key:'prev_vr',   label:'Prev Visit %', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
             { key:'visit_rate',label:'Curr Visit %', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
             { key:'vr_delta',  label:'Δ pp', right:true, render:v=><DeltaRatePill v={v} /> },
             { key:'searches',  label:'Searches', right:true, render:v=>fmt(v) },
-            { key:'category',  label:'Category' },
+            catCol(allRows311),
           ];
           return (
             <>
@@ -1084,13 +1098,14 @@ function Layer3({ layer3 }) {
         {/* 3.12 */}
         {active === '3.12' && (() => {
           const d312 = d('3.12');
+          const allRows312 = [...(d312.improvers||[]), ...(d312.degraders||[])];
           const cols = [
             { key:'term_norm',  label:'Term' },
             { key:'prev_a2c_s', label:'Prev A2C %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
             { key:'a2c_rate_s', label:'Curr A2C %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
             { key:'a2c_delta',  label:'Δ pp', right:true, render:v=><DeltaRatePill v={v} /> },
             { key:'searches',   label:'Searches', right:true, render:v=>fmt(v) },
-            { key:'category',   label:'Category' },
+            catCol(allRows312),
           ];
           return (
             <>
@@ -1107,13 +1122,14 @@ function Layer3({ layer3 }) {
         {/* 3.13 */}
         {active === '3.13' && (() => {
           const d313 = d('3.13');
+          const allRows313 = [...(d313.improvers||[]), ...(d313.degraders||[])];
           const cols = [
             { key:'term_norm',    label:'Term' },
             { key:'prev_pr',      label:'Prev Purch %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
             { key:'purchase_rate',label:'Curr Purch %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
             { key:'pr_delta',     label:'Δ pp', right:true, render:v=><DeltaRatePill v={v} /> },
             { key:'a2c_count',    label:'A2C', right:true, render:v=>fmt(v) },
-            { key:'category',     label:'Category' },
+            catCol(allRows313),
           ];
           return (
             <>
@@ -1137,7 +1153,7 @@ function Layer3({ layer3 }) {
                 { key:'searches',      label:'Searches', right:true, render:v=>fmt(v) },
                 { key:'stages_affected',label:'Stages Hit', right:true, render:v=><span className="font-bold text-rose-600">{v}</span> },
                 { key:'regressions',   label:'Detail', render:v=><span className="text-xs text-rose-800">{v}</span> },
-                { key:'category',      label:'Category' },
+                catCol(d314.terms||[]),
               ]} rows={d314.terms||[]} maxH={420} />
             </Card>
           );
@@ -1152,7 +1168,7 @@ function Layer3({ layer3 }) {
                 { key:'term_norm',      label:'Term' },
                 { key:'searches',       label:'Curr Searches', right:true, render:v=>fmt(v) },
                 { key:'prev_searches',  label:'Prev Searches', right:true, render:v=>fmt(v) },
-                { key:'prev_purchasers',label:'Prev Purchases', right:true, render:v=><span className="font-bold text-rose-600">{fmt(v)}</span> },
+                { key:'prev_orders',label:'Prev Orders', right:true, render:v=><span className="font-bold text-rose-600">{fmt(v)}</span> },
               ]} rows={d315.terms||[]} />
             </Card>
           );
@@ -1166,7 +1182,7 @@ function Layer3({ layer3 }) {
               <DataTable cols={[
                 { key:'term_norm', label:'Term' },
                 { key:'searches',  label:'Searches', right:true, render:v=>fmt(v) },
-                { key:'purchasers',label:'Purchases', right:true, render:v=><span className="font-bold text-emerald-600">{fmt(v)}</span> },
+                { key:'orders',label:'Orders', right:true, render:v=><span className="font-bold text-emerald-600">{fmt(v)}</span> },
                 { key:'usd_revenue',label:'Revenue', right:true, render:v=>fmtCur(v) },
               ]} rows={d316.terms||[]} />
             </Card>
@@ -1196,6 +1212,7 @@ function Layer3({ layer3 }) {
         })()}
 
       </div>
+      {drill && <DrillModal title={drill.title} terms={drill.terms} onClose={() => setDrill(null)} />}
     </div>
   );
 }
@@ -1268,8 +1285,8 @@ function UploadScreen({ onResult }) {
     finally { setLoading(false); }
   };
 
-  const curr = [{key:'search_terms_current',label:'Search Terms (Current)'},{key:'a2c_current',label:'Add-to-Cart Events (Current)'},{key:'purchase_current',label:'Purchases (Current)'}];
-  const prev = [{key:'search_terms_previous',label:'Search Terms (Previous)'},{key:'a2c_previous',label:'Add-to-Cart Events (Previous)'},{key:'purchase_previous',label:'Purchases (Previous)'}];
+  const curr = [{key:'search_terms_current',label:'Search Terms (Current)'},{key:'a2c_current',label:'Add-to-Cart Events (Current)'}];
+  const prev = [{key:'search_terms_previous',label:'Search Terms (Previous)'},{key:'a2c_previous',label:'Add-to-Cart Events (Previous)'}];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-8">
@@ -1281,11 +1298,11 @@ function UploadScreen({ onResult }) {
         </div>
         <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 mb-4 border border-white/10">
           <h2 className="text-xs font-semibold text-indigo-300 uppercase tracking-widest mb-4">Current Period</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{curr.map(c=><FileInput key={c.key} fileKey={c.key} label={c.label} files={files} onChange={setFile}/>)}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{curr.map(c=><FileInput key={c.key} fileKey={c.key} label={c.label} files={files} onChange={setFile}/>)}</div>
         </div>
         <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-white/10">
           <h2 className="text-xs font-semibold text-indigo-300 uppercase tracking-widest mb-1">Previous Period <span className="text-slate-500 normal-case font-normal ml-2">Optional — enables MoM trend analyses</span></h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">{prev.map(c=><FileInput key={c.key} fileKey={c.key} label={c.label} files={files} onChange={setFile}/>)}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">{prev.map(c=><FileInput key={c.key} fileKey={c.key} label={c.label} files={files} onChange={setFile}/>)}</div>
         </div>
         {error && <div className="bg-red-500/20 border border-red-400/50 text-red-300 rounded-xl px-5 py-3 mb-5 text-sm">{error}</div>}
         <div className="flex justify-end">
