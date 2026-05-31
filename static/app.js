@@ -12,7 +12,7 @@ function useChart(ref, buildConfig, deps) {
   }, deps);
 }
 
-function HBarChart({ labels, data, colors, height = 280, onClickIndex, tooltipSuffix = '' }) {
+function HBarChart({ labels, data, colors, height = 280, onClickIndex, tooltipSuffix = '', overallTotal }) {
   const ref = useRef(null);
   const bg = colors || '#4f46e5';
   useChart(ref, () => ({
@@ -20,11 +20,26 @@ function HBarChart({ labels, data, colors, height = 280, onClickIndex, tooltipSu
     data: { labels, datasets: [{ data, backgroundColor: bg, borderRadius: 4, barThickness: 14 }] },
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + (typeof ctx.parsed.x === 'number' ? ctx.parsed.x.toLocaleString() : ctx.parsed.x) + tooltipSuffix } } },
+      plugins: { 
+        legend: { display: false }, 
+        tooltip: { 
+          callbacks: { 
+            label: ctx => {
+              const val = ctx.parsed.x;
+              const formattedVal = typeof val === 'number' ? val.toLocaleString() : val;
+              if (overallTotal > 0 && typeof val === 'number') {
+                const pct = ((val / overallTotal) * 100).toFixed(1);
+                return ` ${formattedVal}${tooltipSuffix} (${pct}%)`;
+              }
+              return ' ' + formattedVal + tooltipSuffix;
+            }
+          } 
+        } 
+      },
       scales: { x: { grid: { color: '#f3f4f6' } }, y: { ticks: { font: { size: 11 } } } },
       onClick: (_, els) => { if (els.length && onClickIndex) onClickIndex(els[0].index); }
     }
-  }), [JSON.stringify(labels), JSON.stringify(data)]);
+  }), [JSON.stringify(labels), JSON.stringify(data), overallTotal]);
   return <div style={{ height }}><canvas ref={ref} /></div>;
 }
 
@@ -63,7 +78,7 @@ function StackedBarChart({ categories, series, height = 260, onClickIndex }) {
   return <div style={{ height }}><canvas ref={ref} /></div>;
 }
 
-function DoughnutChart({ labels, data, colors, height = 260, onClickIndex }) {
+function DoughnutChart({ labels, data, colors, height = 260, onClickIndex, tooltipSuffix = '' }) {
   const ref = useRef(null);
   const bg = colors || labels.map((_, i) => `hsl(${i * 37}, 70%, 58%)`);
   useChart(ref, () => ({
@@ -71,10 +86,22 @@ function DoughnutChart({ labels, data, colors, height = 260, onClickIndex }) {
     data: { labels, datasets: [{ data, backgroundColor: bg, borderWidth: 2, borderColor: '#fff' }] },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '58%',
-      plugins: { legend: { position: 'right', labels: { font: { size: 11 }, padding: 12 } }, tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed.toFixed(1)}%` } } },
+      plugins: { 
+        legend: { position: 'right', labels: { font: { size: 11 }, padding: 12 } }, 
+        tooltip: { 
+          callbacks: { 
+            label: ctx => {
+              const val = ctx.parsed;
+              const totalVal = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = totalVal > 0 ? ((val / totalVal) * 100).toFixed(1) : 0;
+              return ` ${ctx.label}: ${fmt(val)}${tooltipSuffix} (${pct}%)`;
+            }
+          } 
+        } 
+      },
       onClick: (_, els) => { if (els.length && onClickIndex) onClickIndex(els[0].index); }
     }
-  }), [JSON.stringify(labels), JSON.stringify(data)]);
+  }), [JSON.stringify(labels), JSON.stringify(data), tooltipSuffix]);
   return <div style={{ height }}><canvas ref={ref} /></div>;
 }
 
@@ -179,9 +206,10 @@ function KPICard({ title, value, growth, sub }) {
 
 // ─── Drill-Down Modal ─────────────────────────────────────────────────────────
 function DrillModal({ title, terms, onClose }) {
+  const hasVisitRate = terms && terms.length > 0 && terms[0].visit_rate !== undefined;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
           <h3 className="font-bold text-gray-800">{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-2xl font-bold">×</button>
@@ -189,7 +217,14 @@ function DrillModal({ title, terms, onClose }) {
         <div className="overflow-y-auto flex-1">
           <table className="min-w-full text-xs">
             <thead className="sticky top-0 bg-gray-50">
-              <tr><th className="px-4 py-2 text-left text-gray-500">#</th><th className="px-4 py-2 text-left text-gray-500">Term</th><th className="px-4 py-2 text-right text-gray-500">Searches</th><th className="px-4 py-2 text-right text-gray-500">A2C</th><th className="px-4 py-2 text-right text-gray-500">Orders</th></tr>
+              <tr>
+                <th className="px-4 py-2 text-left text-gray-500">#</th>
+                <th className="px-4 py-2 text-left text-gray-500">Term</th>
+                <th className="px-4 py-2 text-right text-gray-500">Searches</th>
+                {hasVisitRate && <th className="px-4 py-2 text-right text-gray-500">Visit Rate</th>}
+                <th className="px-4 py-2 text-right text-gray-500">A2C</th>
+                <th className="px-4 py-2 text-right text-gray-500">Orders</th>
+              </tr>
             </thead>
             <tbody>
               {(terms || []).map((t, i) => (
@@ -197,11 +232,12 @@ function DrillModal({ title, terms, onClose }) {
                   <td className="px-4 py-2 text-gray-400">{i + 1}</td>
                   <td className="px-4 py-2 font-medium text-gray-800">{t.term_norm}</td>
                   <td className="px-4 py-2 text-right">{fmt(t.searches)}</td>
+                  {hasVisitRate && <td className="px-4 py-2 text-right font-semibold text-indigo-600">{fmtN(t.visit_rate * 100, 1)}%</td>}
                   <td className="px-4 py-2 text-right">{fmt(t.a2c_count)}</td>
                   <td className="px-4 py-2 text-right">{fmt(t.orders)}</td>
                 </tr>
               ))}
-              {(terms || []).length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No term data available</td></tr>}
+              {(terms || []).length === 0 && <tr><td colSpan={hasVisitRate ? 6 : 5} className="px-4 py-8 text-center text-gray-400">No term data available</td></tr>}
             </tbody>
           </table>
         </div>
@@ -317,38 +353,22 @@ function DataTable({ cols, rows, maxH = 340 }) {
 // LAYER 2 COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 function Layer2({ layer2 }) {
-  const [activeSection, setActiveSection] = useState('2.1');
+  const [activeSection, setActiveSection] = useState('2.5');
   const [drill, setDrill] = useState(null);
 
   const sections = [
-    { id: '2.1',  label: '2.1 Term Variations', both: false },
-    { id: '2.2',  label: '2.2 Conv Benchmark',  both: false },
-    { id: '2.3',  label: '2.3 Revenue Share',   both: false },
-    { id: '2.4',  label: '2.4 A2C vs Search',   both: false },
     { id: '2.5',  label: '2.5 Long-Tail Depth', both: false },
-    { id: '2.6',  label: '2.6 Rev Efficiency',  both: false },
     { id: '2.7',  label: "2.7 Men's Intent",    both: false },
-    { id: '2.8',  label: '2.8 Gemstone Intent', both: false },
     { id: '2.9',  label: '2.9 Breakout Index',  both: true  },
     { id: '2.10', label: '2.10 Share Shift',     both: true  },
-    { id: '2.11', label: '2.11 New Terms/Cat',   both: true  },
-    { id: '2.12', label: '2.12 LT Expansion',    both: true  },
   ];
 
   const hasBoth = !!(layer2?.['2.9']?.categories?.length);
 
-  const d21 = layer2?.['2.1'] || {};
-  const d22 = layer2?.['2.2'] || {};
-  const d23 = layer2?.['2.3'] || {};
-  const d24 = layer2?.['2.4'] || {};
   const d25 = layer2?.['2.5'] || {};
-  const d26 = layer2?.['2.6'] || {};
   const d27 = layer2?.['2.7'] || {};
-  const d28 = layer2?.['2.8'] || {};
   const d29 = layer2?.['2.9'] || {};
   const d210= layer2?.['2.10']|| {};
-  const d211= layer2?.['2.11']|| {};
-  const d212= layer2?.['2.12']|| {};
 
   return (
     <div className="flex gap-5">
@@ -370,80 +390,6 @@ function Layer2({ layer2 }) {
 
       {/* Content */}
       <div className="flex-1 min-w-0 space-y-5">
-
-        {/* 2.1 ─────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.1' && (
-          <Card title="2.1 · Unique Search Term Variations Per Category" badge="Click row → drill terms" insight={d21.insight}>
-            <HBarChart
-              labels={(d21.table||[]).map(d=>d.category)}
-              data={(d21.table||[]).map(d=>d.unique_terms)}
-              height={280}
-              onClickIndex={i => { const row = (d21.table||[])[i]; if (row) setDrill({ title: row.category + ' — Terms', terms: row.terms || [] }); }}
-            />
-            <DataTable maxH={300} cols={[
-              { key:'category', label:'Category' },
-              { key:'unique_terms', label:'Unique Terms', right:true, render:v=>fmt(v) },
-              { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-              { key:'searches_per_term', label:'Searches/Term', right:true, render:v=>fmtN(v) },
-              { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-            ]} rows={(d21.table||[]).map(r => ({...r, _onClick: ()=>setDrill({ title: r.category+' — Terms', terms: r.terms||[] })}))} />
-          </Card>
-        )}
-
-        {/* 2.2 ─────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.2' && (
-          <Card title="2.2 · Category Conversion Rate Benchmark" badge="Green >1% · Orange 0.1–1% · Red <0.1%" insight={d22.insight}>
-            <HBarChart
-              labels={(d22.table||[]).map(d=>d.category)}
-              data={(d22.table||[]).map(d=>d.conversion_rate||0)}
-              colors={(d22.table||[]).map(d => d.conversion_rate > 1 ? '#10b981' : d.conversion_rate > 0.1 ? '#f59e0b' : '#f43f5e')}
-              tooltipSuffix="%"
-              height={280}
-              onClickIndex={i => { const row=(d22.table||[])[i]; if(row) setDrill({title: row.category+' — Terms', terms: row.terms||[]}); }}
-            />
-            <DataTable maxH={280} cols={[
-              { key:'category', label:'Category' },
-              { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-              { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
-              { key:'conversion_rate', label:'Conv %', right:true, render:v=><ConvBadge v={v} /> },
-              { key:'revenue', label:'Revenue', right:true, render:v=>fmtCur(v) },
-            ]} rows={(d22.table||[]).map(r => ({...r, _onClick:()=>setDrill({title:r.category+' — Terms',terms:r.terms||[]})}))} />
-          </Card>
-        )}
-
-        {/* 2.3 ─────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.3' && (
-          <Card title="2.3 · Category Revenue Share" badge="Click segment to drill" insight={d23.insight}>
-            <DoughnutChart
-              labels={(d23.table||[]).map(d=>d.category)}
-              data={(d23.table||[]).map(d=>d.revenue_share||0)}
-              onClickIndex={i => { const row=(d23.table||[])[i]; if(row) setDrill({title:row.category+' — Terms', terms:row.terms||[]}); }}
-            />
-            <DataTable maxH={280} cols={[
-              { key:'category', label:'Category' },
-              { key:'revenue', label:'Revenue', right:true, render:v=>fmtCur(v) },
-              { key:'revenue_share', label:'Rev Share', right:true, render:v=>fmtN(v)+'%' },
-              { key:'search_share', label:'Search Share', right:true, render:v=>fmtN(v)+'%' },
-              { key:'density', label:'Rev Density', right:true, render:v=>fmtN(v,2)+'x' },
-            ]} rows={(d23.table||[]).map(r => ({...r, _onClick:()=>setDrill({title:r.category+' — Terms',terms:r.terms||[]})}))} />
-          </Card>
-        )}
-
-        {/* 2.4 ─────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.4' && (
-          <Card title="2.4 · A2C Share vs. Search Share" badge="Above diagonal = over-converting" insight={d24.insight}>
-            <ScatterParity points={d24.points||[]} height={320} />
-            <DataTable maxH={240} cols={[
-              { key:'category', label:'Category' },
-              { key:'search_share', label:'Search Share %', right:true, render:v=>fmtN(v)+'%' },
-              { key:'a2c_share', label:'A2C Share %', right:true, render:v=>fmtN(v)+'%' },
-              { key:'over_index', label:'Status', sortable:true, render:v=>v
-                ? <span className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-semibold">Over-indexing ↑</span>
-                : <span className="text-xs px-2 py-0.5 bg-rose-100 text-rose-700 rounded font-semibold">Under-indexing ↓</span>
-              },
-            ]} rows={d24.points||[]} />
-          </Card>
-        )}
 
         {/* 2.5 ─────────────────────────────────────────────────────────────── */}
         {activeSection === '2.5' && (
@@ -469,24 +415,6 @@ function Layer2({ layer2 }) {
               { key:'lt_searches', label:'Long-Tail Searches', right:true, render:(v, r)=><button className="text-purple-600 hover:underline" onClick={(e)=>{e.stopPropagation(); setDrill({title:r.category+' — Long-Tail Terms', terms:r.lt_terms||[]})}}>{fmt(v)}</button> },
               { key:'lt_pct', label:'Long-Tail %', right:true, render:v=>fmtN(v)+'%' },
             ]} rows={d25.table||[]} />
-          </Card>
-        )}
-
-        {/* 2.6 ─────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.6' && (
-          <Card title="2.6 · Category Intent-to-Revenue Efficiency (Searches per $1)" badge="Lower = more efficient" insight={d26.insight}>
-            <HBarChart
-              labels={(d26.table||[]).map(d=>d.category)}
-              data={(d26.table||[]).map(d=>d.searches_per_dollar||0)}
-              height={260}
-              tooltipSuffix=" searches/$1"
-            />
-            <DataTable maxH={240} cols={[
-              { key:'category', label:'Category' },
-              { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-              { key:'revenue', label:'Revenue', right:true, render:v=>fmtCur(v) },
-              { key:'searches_per_dollar', label:'Searches / $1', right:true, render:v=>fmtN(v,1) },
-            ]} rows={d26.table||[]} />
           </Card>
         )}
 
@@ -518,20 +446,6 @@ function Layer2({ layer2 }) {
               ]} rows={d27.terms||[]} />
             </Card>
           </>
-        )}
-
-        {/* 2.8 ─────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.8' && (
-          <Card title="2.8 · Gemstone Intent Analysis" badge="Click row to drill" insight={d28.insight}>
-            <DataTable maxH={320} cols={[
-              { key:'gemstone', label:'Gemstone', render:v=><span className="capitalize font-semibold">{v}</span> },
-              { key:'term_count', label:'Terms', right:true },
-              { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-              { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-              { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
-              { key:'a2c_rate', label:'A2C Rate', right:true, render:v=>fmtN(v,2)+'%' },
-            ]} rows={(d28.gems||[]).map(r => ({...r, _onClick:()=>setDrill({title: r.gemstone+' — Terms', terms: r.terms||[]})}))} />
-          </Card>
         )}
 
         {/* 2.9 ─────────────────────────────────────────────────────────────── */}
@@ -575,43 +489,6 @@ function Layer2({ layer2 }) {
           </Card>
         )}
 
-        {/* 2.11 ────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.11' && (
-          <Card title="2.11 · New Search Terms Per Category" badge="Click bar to see terms" insight={d211.insight} insightType="success">
-            <HBarChart
-              labels={(d211.by_category||[]).map(d=>d.category)}
-              data={(d211.by_category||[]).map(d=>d.new_terms||0)}
-              height={260}
-              onClickIndex={i => { const row=(d211.by_category||[])[i]; if(row) setDrill({title:row.category+' New Terms', terms:(row.terms||[]).map(t=>({term_norm:t.term_norm, searches:t.searches, a2c_count:0, orders:0}))}); }}
-            />
-            <DataTable maxH={240} cols={[
-              { key:'category', label:'Category' },
-              { key:'new_terms', label:'New Terms', right:true, render:v=>fmt(v) },
-              { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-            ]} rows={(d211.by_category||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' New Terms', terms:(r.terms||[]).map(t=>({term_norm:t.term_norm, searches:t.searches, a2c_count:0, orders:0}))})})) } />
-          </Card>
-        )}
-
-        {/* 2.12 ────────────────────────────────────────────────────────────── */}
-        {activeSection === '2.12' && (
-          <Card title="2.12 · Long-Tail Expansion by Category (Δ pp MoM)" insight={d212.insight} insightType="info">
-            <VBarChart
-              labels={(d212.chart||[]).map(d=>d.category)}
-              data={(d212.chart||[]).map(d=>d.delta||0)}
-              colors={(d212.chart||[]).map(d=>(d.delta||0)>=0?'#8b5cf6':'#fb923c')}
-              tooltipSuffix="pp"
-              height={260}
-              onClickIndex={i=>{const row=(d212.chart||[])[i];if(row)setDrill({title:row.category+' — Terms', terms:row.terms||[]})}}
-            />
-            <DataTable maxH={240} cols={[
-              { key:'category', label:'Category' },
-              { key:'lt_pct_prev', label:'Prev LT %', right:true, render:v=>fmtN(v)+'%' },
-              { key:'lt_pct_curr', label:'Curr LT %', right:true, render:v=>fmtN(v)+'%' },
-              { key:'delta', label:'Δ pp', right:true, render:v=><GrowthPill v={v}/> },
-            ]} rows={(d212.chart||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' — Terms', terms:r.terms||[]})}))} />
-          </Card>
-        )}
-
       </div>
       {drill && <DrillModal title={drill.title} terms={drill.terms} onClose={() => setDrill(null)} />}
     </div>
@@ -626,47 +503,278 @@ function HBarChart2(props) { return <HBarChart {...props} />; } // alias
 function Layer1({ layer1 }) {
   const [drill, setDrill] = useState(null);
   const [activeSection, setActiveSection] = useState('1.1');
+  const [view11, setView11] = useState('volume');
+
+  // Returns 'green' | 'amber' | 'red' for a given rate value
+  // thr = the site-average for that metric (decimal 0–1)
+  // val = the term's rate value (decimal 0–1)
+  function rateBand(val, thr) {
+    if (val == null) return 'amber'; // And in rateBand for purchase_rate, return 'amber' if val is null.
+    if (thr == null || thr === 0) return 'amber'; // no baseline, default neutral
+    if (val >= thr)           return 'green';  // at or above site average
+    if (val >= thr * 0.5)     return 'amber';  // 50–99% of site average
+    return 'red';                               // below 50% of site average
+  }
+
+  // Returns 'green' | 'amber' | 'red' for composite signal
+  // Counts how many of the 3 metrics are 'red'
+  function compositeSignal(vBand, aBand, pBand) {
+    const reds = [vBand, aBand, pBand].filter(b => b === 'red').length;
+    if (reds === 0) return 'green';
+    if (reds === 1) return 'amber';
+    return 'red';
+  }
+
+  // Tailwind classes for each band's rate cell
+  function bandClasses(band) {
+    return {
+      green: 'bg-emerald-50 text-emerald-700 font-semibold',
+      amber: 'bg-amber-50   text-amber-700   font-semibold',
+      red:   'bg-rose-50    text-rose-700    font-semibold',
+    }[band];
+  }
+
+  // Tailwind classes for composite signal dot
+  function signalDotClass(sig) {
+    return {
+      green: 'bg-emerald-500',
+      amber: 'bg-amber-400',
+      red:   'bg-rose-500',
+    }[sig];
+  }
 
   const sections = [
     { id: '1.1',  label: '1.1 Top 50 Terms', both: false },
-    { id: '1.2',  label: '1.2 Volume Conc.', both: false },
-    { id: '1.3',  label: '1.3 Cat Rollup',   both: false },
-    { id: '1.4',  label: '1.4 Cat Share',     both: false },
     { id: '1.5',  label: '1.5 Long-Tail',     both: false },
     { id: '1.6',  label: '1.6 Occasions',     both: false },
-    { id: '1.7',  label: '1.7 Variants',      both: false },
-    { id: '1.8',  label: '1.8 MoM Change',    both: true  },
     { id: '1.9',  label: '1.9 Rising',        both: true  },
     { id: '1.10', label: '1.10 Falling',       both: true  },
     { id: '1.11', label: '1.11 New Terms',     both: true  },
-    { id: '1.12', label: '1.12 Vanishing',     both: true  },
     { id: '1.13', label: '1.13 Breakouts',     both: true  },
-    { id: '1.14', label: '1.14 Share Shift',   both: true  },
   ];
 
-  const d11  = layer1?.['1.1'] || [];
-  const d12  = layer1?.['1.2'] || {};
-  const d13  = layer1?.['1.3'] || {};
-  const d14  = layer1?.['1.4'] || {};
+  const d11raw   = layer1?.['1.1'] || {};
+  const d11      = d11raw.terms || [];
+  const d11thr   = d11raw.thresholds || null;
+
+  const hasPrev  = d11.some(r => r.prev_searches != null && r.prev_searches > 0);
+
+  useEffect(() => {
+    if (!hasPrev) {
+      setView11('volume');
+    }
+  }, [hasPrev]);
+
   const d15  = layer1?.['1.5'] || {};
   const d16  = layer1?.['1.6'] || {};
-  const d17  = layer1?.['1.7'] || {};
-  const d18  = layer1?.['1.8'] || {};
   const d19  = layer1?.['1.9'] || {};
   const d110 = layer1?.['1.10'] || {};
   const d111 = layer1?.['1.11'] || {};
-  const d112 = layer1?.['1.12'] || {};
   const d113 = layer1?.['1.13'] || {};
-  const d114 = layer1?.['1.14'] || {};
-  const hasBoth = d18?.gainers?.length > 0;
+  const hasBoth = d19?.terms?.length > 0;
 
-  const termCols = [
-    { key:'term_norm', label:'Term' },
-    { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-    { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-    { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
-    { key:'category', label:'Category' },
-  ];
+  const thrUnavailable = !d11thr || (d11thr.visit_rate === 0 && d11thr.a2c_rate === 0 && d11thr.purchase_rate === 0);
+
+  function TermRow({ t, rank, showBadge }) {
+    // t is an enriched term object (has vBand, aBand, pBand, sig, mom)
+
+    // Annotation badge logic
+    const badge = (() => {
+      if (!showBadge) return null;
+      if (t.mom > 30 && (t.vBand === 'red' || t.aBand === 'red'))
+        return { label: 'growing — broken funnel', cls: 'bg-amber-100 text-amber-800 border-amber-300' };
+      if (t.mom != null && t.mom < -20 && t.sig === 'green')
+        return { label: 'declining — rates still healthy', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+      return null;
+    })();
+
+    return (
+      <tr className="border-b border-gray-100 hover:bg-indigo-50 transition-colors">
+
+        {/* Rank */}
+        <td className="px-3 py-2 text-xs text-gray-400 w-8">{rank}</td>
+
+        {/* Term + category */}
+        <td className="px-3 py-2" style={{ width: '200px' }}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span 
+              className="text-xs font-medium text-gray-800 hover:text-indigo-600 hover:underline cursor-pointer"
+              onClick={() => setDrill({ title: t.term_norm, terms: [t] })}
+            >
+              {t.term_norm}
+            </span>
+            {badge && (
+              <span className={`text-xs px-1.5 py-0.5 rounded border font-medium ${badge.cls}`}>
+                {badge.label}
+              </span>
+            )}
+          </div>
+          <span 
+            className="text-xs bg-gray-100 text-gray-500 hover:bg-indigo-100 hover:text-indigo-700 px-1.5 py-0.5 rounded-full mt-1 inline-block cursor-pointer transition-colors"
+            onClick={() => {
+              const filtered = d11.filter(item => item.category === t.category);
+              setDrill({ title: t.category + ' — Terms', terms: filtered });
+            }}
+          >
+            {t.category}
+          </span>
+        </td>
+
+        {/* Searches + MoM delta (two-line cell) */}
+        <td className="px-3 py-2 text-right" style={{ width: '120px' }}>
+          <div className="text-xs font-semibold text-gray-800">
+            {fmt(t.searches)}
+          </div>
+          {t.mom != null ? (
+            <div className={`text-xs font-semibold mt-0.5
+              ${t.mom > 2 ? 'text-emerald-600' : t.mom < -2 ? 'text-rose-600' : 'text-gray-400'}`}>
+              {t.mom > 2 ? '▲' : t.mom < -2 ? '▼' : '~'}
+              {t.mom > 0 ? '+' : ''}{t.mom}%
+            </div>
+          ) : (
+            <div className="text-xs text-gray-300 mt-0.5">no prev</div>
+          )}
+        </td>
+
+        {/* Visit Rate % */}
+        <td className="px-3 py-2 text-right" style={{ width: '80px' }}>
+          <span className={`text-xs px-2 py-0.5 rounded ${bandClasses(t.vBand)}`}>
+            {(t.visit_rate * 100).toFixed(1)}%
+          </span>
+        </td>
+
+        {/* A2C Rate % */}
+        <td className="px-3 py-2 text-right" style={{ width: '75px' }}>
+          <span className={`text-xs px-2 py-0.5 rounded ${bandClasses(t.aBand)}`}>
+            {(t.a2c_rate_s * 100).toFixed(1)}%
+          </span>
+        </td>
+
+        {/* Purchase Rate % */}
+        <td className="px-3 py-2 text-right" style={{ width: '75px' }}>
+          {t.purchase_rate != null
+            ? <span className={`text-xs px-2 py-0.5 rounded ${bandClasses(t.pBand)}`}>
+                {(t.purchase_rate * 100).toFixed(1)}%
+              </span>
+            : <span className="text-xs text-gray-400">—</span>
+          }
+        </td>
+
+        {/* Composite signal dot */}
+        <td className="px-3 py-2 text-center" style={{ width: '44px' }}>
+          {!thrUnavailable && (
+            <span className={`inline-block w-2.5 h-2.5 rounded-full ${signalDotClass(t.sig)}`} />
+          )}
+        </td>
+      </tr>
+    );
+  }
+
+  const [sortKey, setSortKey] = useState('searches');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortAsc(prev => !prev);
+    } else {
+      setSortKey(key);
+      setSortAsc(key === 'term_norm' ? true : false);
+    }
+  };
+
+  const sortTerms = (list) => {
+    return [...list].sort((a, b) => {
+      let valA = a[sortKey];
+      let valB = b[sortKey];
+
+      // Custom mapping for signal
+      if (sortKey === 'sig') {
+        const sigMap = { green: 3, amber: 2, red: 1 };
+        valA = sigMap[a.sig] || 0;
+        valB = sigMap[b.sig] || 0;
+      }
+
+      if (valA === undefined || valA === null) {
+        if (valB === undefined || valB === null) return 0;
+        return sortAsc ? -1 : 1;
+      }
+      if (valB === undefined || valB === null) {
+        return sortAsc ? 1 : -1;
+      }
+
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      }
+
+      return sortAsc ? valA - valB : valB - valA;
+    });
+  };
+
+  function TermTableHead() {
+    const renderHeader = (key, label, sortKeyTarget = key) => {
+      const active = sortKey === sortKeyTarget;
+      return (
+        <span 
+          onClick={() => handleSort(sortKeyTarget)}
+          className={`cursor-pointer hover:text-gray-900 select-none transition-colors inline-flex items-center gap-1 ${active ? 'text-indigo-600 font-bold' : ''}`}
+        >
+          {label}
+          <SortIcon active={active} asc={sortAsc} />
+        </span>
+      );
+    };
+
+    return (
+      <thead className="sticky top-0 bg-gray-50 z-10">
+        <tr className="border-b border-gray-200 text-xs text-gray-500 font-medium">
+          <th className="px-3 py-2 text-left w-8">#</th>
+          <th className="px-3 py-2 text-left w-[200px]">
+            {renderHeader('term_norm', 'Term')}
+          </th>
+          <th className="px-3 py-2 text-right w-[120px]">
+            {renderHeader('searches', 'Searches')}
+            <span className="mx-1 text-gray-300">/</span>
+            {renderHeader('mom', 'MoM')}
+          </th>
+          <th className="px-3 py-2 text-right w-[80px]">
+            {renderHeader('visit_rate', 'Visit %')}
+          </th>
+          <th className="px-3 py-2 text-right w-[75px]">
+            {renderHeader('a2c_rate_s', 'A2C %')}
+          </th>
+          <th className="px-3 py-2 text-right w-[75px]">
+            {renderHeader('purchase_rate', 'Purchase %')}
+          </th>
+          <th className="px-3 py-2 text-center w-[44px]">
+            {renderHeader('sig', 'Signal')}
+          </th>
+        </tr>
+      </thead>
+    );
+  }
+
+  // Per-term enriched objects (add band + signal to each term)
+  const enriched = d11.map(t => {
+    const vBand = rateBand(t.visit_rate,    d11thr?.visit_rate);
+    const aBand = rateBand(t.a2c_rate_s,    d11thr?.a2c_rate);
+    const pBand = rateBand(t.purchase_rate, d11thr?.purchase_rate);
+    const sig   = compositeSignal(vBand, aBand, pBand);
+    const mom   = t.searches_growth != null ? Math.round(t.searches_growth) : null;
+    return { ...t, vBand, aBand, pBand, sig, mom };
+  });
+
+  // Summary counts
+  const growCount    = enriched.filter(t => t.mom != null && t.mom > 2).length;
+  const declineCount = enriched.filter(t => t.mom != null && t.mom < -2).length;
+  const stableCount  = enriched.length - growCount - declineCount;
+
+  // For growth view
+  const growers   = [...enriched].filter(t => t.mom != null && t.mom > 2);
+  const decliners = [...enriched].filter(t => t.mom != null && t.mom < -2);
+  const stable    = [...enriched].filter(t => t.mom != null && t.mom >= -2 && t.mom <= 2);
+
+  // Volume view: sorted by searches desc (default)
+  const byVolume = [...enriched];
 
   return (
     <div className="flex gap-5">
@@ -687,38 +795,197 @@ function Layer1({ layer1 }) {
 
       <div className="flex-1 min-w-0 space-y-5">
         {activeSection === '1.1' && (
-          <Card title="1.1 · Top 50 Terms by Search Volume" badge="Click bar to drill" insight="The top 10 terms are your highest-intent queries. Prioritise catalog depth and relevance here first.">
-            <HBarChart labels={d11.slice(0,20).map(d=>d.term_norm)} data={d11.slice(0,20).map(d=>d.searches)} color="#4f46e5" height={360} onClickIndex={i=>setDrill({title:d11[i]?.term_norm,terms:[d11[i]]})} />
-            <DataTable maxH={280} cols={[
-              { key:'term_norm', label:'Term' },
-              { key:'searches', label:'Searches', right:true, render:v=>fmt(v) },
-              ...(hasBoth ? [
-                { key:'prev_searches', label:'Prev Searches', right:true, render:v=>fmt(v) },
-                { key:'searches_growth', label:'MoM %', right:true, sortable:true, render:v=><GrowthPill v={v} /> }
-              ] : []),
-              { key:'a2c_count', label:'A2C', right:true, render:v=>fmt(v) },
-              { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
-              { key:'category', label:'Category' },
-            ]} rows={d11.map(r=>({...r,_onClick:()=>setDrill({title:r.term_norm, terms:[r]})}))} />
-          </Card>
-        )}
-        {activeSection === '1.2' && (
-          <Card title="1.2 · Search Volume Concentration" badge="Click donut segment" insight={d12.insight}>
-            <DoughnutChart labels={(d12.chart||[]).map(d=>d.name)} data={(d12.chart||[]).map(d=>d.value)} colors={['#4f46e5','#7c3aed','#a855f7','#e879f9']} onClickIndex={i=>{const seg=(d12.chart||[])[i];if(seg)setDrill({title:seg.name+' — Terms',terms:seg.terms||[]});}} />
-          </Card>
-        )}
-        {activeSection === '1.3' && (
-          <Card title="1.3 · Category-Level Search Volume Rollup" insight={d13.insight}>
-            <HBarChart labels={(d13.chart||[]).map(d=>d.category)} data={(d13.chart||[]).map(d=>d.searches)} color="#6366f1" height={280} onClickIndex={i=>{const row=(d13.chart||[])[i];if(row)setDrill({title:row.category+' — Terms',terms:row.terms||[]});}} />
-            <DataTable cols={[{key:'category',label:'Category'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'search_share',label:'Share',right:true,render:v=>fmtN(v)+'%'},{key:'revenue',label:'Revenue',right:true,render:v=>fmtCur(v)}]} rows={(d13.chart||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' — Terms',terms:r.terms||[]})}))} />
-          </Card>
-        )}
-        {activeSection === '1.4' && (
           <>
-            <Card title="1.4 · Category Search Share" badge="Click donut segment">
-              <DoughnutChart labels={(d14.chart||[]).map(d=>d.category)} data={(d14.chart||[]).map(d=>d.searches)} onClickIndex={i=>{const row=(d14.chart||[])[i];if(row)setDrill({title:row.category+' — Terms',terms:[]});}} />
-            </Card>
-            {(d14.flags||[]).length > 0 && <Card title="Flagged Categories"><ul className="space-y-2">{d14.flags.map((f,i)=><li key={i} className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">⚠️ {f}</li>)}</ul></Card>}
+            {/* Summary Bar */}
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              {hasPrev ? (
+                <>
+                  <span className="text-xs px-3 py-1 rounded-full font-semibold
+                                   bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    ↑ {growCount} growing
+                  </span>
+                  <span className="text-xs px-3 py-1 rounded-full font-semibold
+                                   bg-gray-100 text-gray-600 border border-gray-200">
+                    {stableCount} stable
+                  </span>
+                  <span className="text-xs px-3 py-1 rounded-full font-semibold
+                                   bg-rose-50 text-rose-700 border border-rose-200">
+                    ↓ {declineCount} declining
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs px-3 py-1 rounded-full font-semibold
+                                 bg-gray-100 text-gray-600 border border-gray-200">
+                  {d11.length} terms
+                </span>
+              )}
+
+              {/* Threshold reference — helps stakeholders understand the colour scale */}
+              {thrUnavailable ? (
+                <span className="ml-auto text-xs text-amber-600 font-semibold">
+                  ⚠️ Threshold data unavailable — rates shown without colour banding
+                </span>
+              ) : (
+                d11thr && (
+                  <span className="ml-auto text-xs text-gray-400">
+                    Site avg — Visit: {(d11thr.visit_rate * 100).toFixed(1)}%
+                    · A2C: {(d11thr.a2c_rate * 100).toFixed(1)}%
+                    · Purch: {(d11thr.purchase_rate * 100).toFixed(1)}%
+                    &nbsp;(green = at/above avg, amber = 50–99% of avg, red = below 50%)
+                  </span>
+                )
+              )}
+            </div>
+
+            {/* View Toggle Tabs */}
+            <div className="flex gap-0 mb-4 border border-gray-200
+                            rounded-lg overflow-hidden w-fit text-xs">
+              {[
+                { id: 'volume', label: 'By volume' },
+                { id: 'growth', label: 'By growth / decline', disabled: !hasPrev }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  disabled={tab.disabled}
+                  onClick={() => setView11(tab.id)}
+                  className={`px-4 py-2 font-medium transition-colors border-r
+                              border-gray-200 last:border-0
+                    ${view11 === tab.id
+                      ? 'bg-indigo-600 text-white'
+                      : tab.disabled
+                        ? 'text-gray-300 cursor-not-allowed bg-white'
+                        : 'text-gray-600 hover:bg-indigo-50 bg-white'}`}
+                >
+                  {tab.label}
+                  {tab.disabled && <span className="ml-1 text-gray-300">🔄</span>}
+                </button>
+              ))}
+            </div>
+
+            {view11 === 'volume' ? (
+              <Card title="1.1 · Top 50 terms by search volume"
+                    badge="Click a category pill to drill into that category">
+                <div className="flex justify-between items-center mb-2 px-1">
+                  <span className="text-xs text-gray-400">
+                    Sorted by {sortKey === 'searches' ? 'Volume' : sortKey === 'mom' ? 'Growth (MoM %)' : sortKey === 'term_norm' ? 'Name' : sortKey === 'visit_rate' ? 'Visit %' : sortKey === 'a2c_rate_s' ? 'A2C %' : sortKey === 'purchase_rate' ? 'Purchase %' : 'Signal'} ({sortAsc ? 'ascending' : 'descending'})
+                  </span>
+                </div>
+                <div className="overflow-auto" style={{ maxHeight: '520px' }}>
+                  <table className="min-w-full text-xs" style={{ tableLayout: 'fixed' }}>
+                    <TermTableHead />
+                    <tbody>
+                      {sortTerms(byVolume).map((t, i) => (
+                        <TermRow key={t.term_norm} t={t} rank={i + 1} showBadge={false} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Insight box at BOTTOM — standard position for reference context */}
+                <Insight text="Sorted by search volume. Signal dot = composite funnel health.
+                               Green = all 3 rates at/above site average.
+                               Amber = one rate below average. Red = two or more broken." />
+              </Card>
+            ) : (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-xs text-gray-400">
+                    Sorted by {sortKey === 'searches' ? 'Volume' : sortKey === 'mom' ? 'Growth (MoM %)' : sortKey === 'term_norm' ? 'Name' : sortKey === 'visit_rate' ? 'Visit %' : sortKey === 'a2c_rate_s' ? 'A2C %' : sortKey === 'purchase_rate' ? 'Purchase %' : 'Signal'} ({sortAsc ? 'ascending' : 'descending'})
+                  </span>
+                </div>
+
+                {/* GROWERS SECTION */}
+                <div>
+                  <div className="flex items-center gap-2 px-1 mb-2">
+                    <span className="text-xs font-semibold text-emerald-700
+                                     bg-emerald-50 border border-emerald-200
+                                     px-3 py-1 rounded-full">
+                      ↑ Top growers ({growers.length} terms) — are they converting?
+                    </span>
+                  </div>
+                  <div className="overflow-auto rounded-xl border border-gray-200"
+                       style={{ maxHeight: '380px' }}>
+                    <table className="min-w-full text-xs" style={{ tableLayout: 'fixed' }}>
+                      <TermTableHead />
+                      <tbody>
+                        {sortTerms(growers).map((t, i) => (
+                          <TermRow key={t.term_norm} t={t} rank={i + 1} showBadge={true} />
+                        ))}
+                        {growers.length === 0 && (
+                          <tr><td colSpan={7}
+                                  className="px-4 py-6 text-center text-gray-400 text-xs">
+                            No growing terms this period (or no previous period uploaded)
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* STABLE SECTION */}
+                <div>
+                  <div className="flex items-center gap-2 px-1 mb-2">
+                    <span className="text-xs font-semibold text-slate-700
+                                     bg-slate-50 border border-slate-200
+                                     px-3 py-1 rounded-full">
+                      → Stable terms ({stable.length} terms) — steady performance
+                    </span>
+                  </div>
+                  <div className="overflow-auto rounded-xl border border-gray-200"
+                       style={{ maxHeight: '380px' }}>
+                    <table className="min-w-full text-xs" style={{ tableLayout: 'fixed' }}>
+                      <TermTableHead />
+                      <tbody>
+                        {sortTerms(stable).map((t, i) => (
+                          <TermRow key={t.term_norm} t={t} rank={i + 1} showBadge={true} />
+                        ))}
+                        {stable.length === 0 && (
+                          <tr><td colSpan={7}
+                                  className="px-4 py-6 text-center text-gray-400 text-xs">
+                            No stable terms this period
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* DECLINERS SECTION */}
+                <div>
+                  <div className="flex items-center gap-2 px-1 mb-2">
+                    <span className="text-xs font-semibold text-rose-700
+                                     bg-rose-50 border border-rose-200
+                                     px-3 py-1 rounded-full">
+                      ↓ Declining terms ({decliners.length} terms) — worth fighting for?
+                    </span>
+                  </div>
+                  <div className="overflow-auto rounded-xl border border-gray-200"
+                       style={{ maxHeight: '380px' }}>
+                    <table className="min-w-full text-xs" style={{ tableLayout: 'fixed' }}>
+                      <TermTableHead />
+                      <tbody>
+                        {sortTerms(decliners).map((t, i) => (
+                          <TermRow key={t.term_norm} t={t} rank={i + 1} showBadge={true} />
+                        ))}
+                        {decliners.length === 0 && (
+                          <tr><td colSpan={7}
+                                  className="px-4 py-6 text-center text-gray-400 text-xs">
+                            No declining terms this period
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <Insight
+                  text="Growers with amber/red rate cells = demand rising into a broken funnel —
+                        fix search relevance or catalog before investing in growth.
+                        Decliners with green signal = demand fell but product experience is intact —
+                        investigate seasonality, external competition, or marketing pause."
+                  type="info"
+                />
+              </div>
+            )}
           </>
         )}
         {activeSection === '1.5' && (
@@ -751,21 +1018,6 @@ function Layer1({ layer1 }) {
             </div>
           </Card>
         )}
-        {activeSection === '1.7' && (
-          <Card title="1.7 · Spelling Variant Clusters" insight={d17.insight}>
-            <DataTable cols={[{key:'top_variant',label:'Top Variant'},{key:'variant_count',label:'# Variants',right:true},{key:'top_variant_searches',label:'Top Searches',right:true,render:v=>fmt(v)},{key:'combined_searches',label:'Combined',right:true,render:v=>fmt(v)},{key:'variants',label:'All Variants',render:v=><span className="text-gray-500 text-xs">{(v||[]).join(', ')}</span>}]} rows={d17.clusters||[]} />
-          </Card>
-        )}
-        {activeSection === '1.8' && (
-          <>
-            <Card title="1.8 · Top 15 Gainers (MoM %)" badge="Both periods" insight={d18.insight}>
-              <VBarChart labels={(d18.gainers||[]).map(d=>d.term_norm)} data={(d18.gainers||[]).map(d=>parseFloat(d.growth.toFixed(1)))} colors={(d18.gainers||[]).map(()=>'#10b981')} tooltipSuffix="%" height={220} />
-            </Card>
-            <Card title="1.8 · Top 15 Losers (MoM %)">
-              <VBarChart labels={(d18.losers||[]).map(d=>d.term_norm)} data={(d18.losers||[]).map(d=>parseFloat(Math.abs(d.growth).toFixed(1)))} colors={(d18.losers||[]).map(()=>'#f43f5e')} tooltipSuffix="%" height={220} />
-            </Card>
-          </>
-        )}
         {activeSection === '1.9' && (
           <Card title="1.9 · Rising Terms (>20% MoM, ≥200 searches)" insight={d19.insight} insightType="success">
             <DataTable cols={[{key:'term_norm',label:'Term'},{key:'prev_searches',label:'Prev',right:true,render:v=>fmt(v)},{key:'searches',label:'Current',right:true,sortable:true,render:v=>fmt(v)},{key:'growth',label:'Growth',right:true,render:v=><GrowthPill v={v}/>},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d19.terms||[]} />
@@ -778,36 +1030,31 @@ function Layer1({ layer1 }) {
         )}
         {activeSection === '1.11' && (
           <Card title="1.11 · New Term Appearances" badge="Not in prev period" insight={d111.insight} insightType="success">
-            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'orders',label:'Orders',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d111.terms||[]} />
+            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'searches',label:'Searches',right:true,render:v=>fmt(v)},{key:'a2c_count',label:'A2C',right:true,render:v=>fmt(v)},{key:'orders',label:'Purchases',right:true,render:v=>fmt(v)},{key:'category',label:'Category'}]} rows={d111.terms||[]} />
           </Card>
         )}
-        {activeSection === '1.12' && (
-          <Card title="1.12 · Vanishing Terms (had revenue, now gone)" insight={d112.insight} insightType="danger">
-            <DataTable cols={[{key:'term_norm',label:'Term'},{key:'prev_searches',label:'Prev Searches',right:true,render:v=>fmt(v)},{key:'searches',label:'Current',right:true,render:v=>fmt(v)},{key:'orders',label:'Prev Orders',right:true,render:v=>fmt(v)}]} rows={d112.terms||[]} />
-          </Card>
-        )}
-        {activeSection === '1.13' && (
-          <Card title="1.13 · Breakout Detection (>100% MoM)" insight={d113.insight} insightType="success">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {(d113.terms||[]).map((t,i)=>(
-                <div key={i} className="border border-emerald-200 bg-emerald-50 rounded-xl p-4">
-                  <div className="flex items-start justify-between mb-1">
-                    <span className="font-semibold text-gray-900 text-sm">{t.term_norm}</span>
-                    <span className="bg-emerald-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">+{t.growth.toFixed(0)}%</span>
-                  </div>
-                  <p className="text-xs text-gray-500">{t.category} · {fmt(t.searches)} searches · {fmt(t.a2c_count)} A2C</p>
-                </div>
-              ))}
-              {(d113.terms||[]).length === 0 && <p className="text-sm text-gray-400 col-span-2 py-6 text-center">No breakout terms (requires both periods)</p>}
+        {activeSection === '1.13' && (() => {
+          const d113 = layer1?.['1.13'] || {};
+          const cols = [
+            { key: 'term_norm',     label: 'Term' },
+            { key: 'category',      label: 'Category' },
+            { key: 'prev_searches', label: 'Prev Searches', right: true, render: v => fmt(v) },
+            { key: 'searches',      label: 'Searches', right: true, sortable: true, render: v => fmt(v) },
+            { key: 'growth',        label: 'Growth', right: true, sortable: true, render: v => <GrowthPill v={v} /> },
+            { key: 'a2c_count',     label: 'A2C', right: true, render: v => fmt(v) },
+            { key: 'orders',        label: 'Orders', right: true, render: v => fmt(v) }
+          ];
+          return (
+            <div className="space-y-6">
+              <Card title="1.13 · High-Volume Breakouts (≥300 searches, >100% MoM)" insight={d113.insight} insightType="success">
+                <DataTable cols={cols} rows={d113.terms_300 || []} maxH={300} />
+              </Card>
+              <Card title="1.13 · Low-Volume Breakouts (100–299 searches, >100% MoM)" insightType="info">
+                <DataTable cols={cols} rows={d113.terms_100 || []} maxH={300} />
+              </Card>
             </div>
-          </Card>
-        )}
-        {activeSection === '1.14' && (
-          <Card title="1.14 · Category Share Shift (pp MoM)" insight={d114.insight}>
-            <VBarChart labels={(d114.chart||[]).map(d=>d.category)} data={(d114.chart||[]).map(d=>parseFloat((d.delta||0).toFixed(2)))} colors={(d114.chart||[]).map(d=>(d.delta||0)>=0?'#10b981':'#f43f5e')} tooltipSuffix="pp" height={260} />
-            <DataTable cols={[{key:'category',label:'Category'},{key:'prev_share',label:'Prev Share',right:true,render:v=>fmtN(v)+'%'},{key:'curr_share',label:'Curr Share',right:true,render:v=>fmtN(v)+'%'},{key:'delta',label:'Δ pp',right:true,render:v=><GrowthPill v={v}/>}]} rows={d114.chart||[]} />
-          </Card>
-        )}
+          );
+        })()}
       </div>
       {drill && <DrillModal title={drill.title} terms={drill.terms} onClose={() => setDrill(null)} />}
     </div>
@@ -879,19 +1126,12 @@ function Layer3({ layer3 }) {
 
   const sections = [
     { id: '3.1',  label: '3.1 Visit Rate',      both: false },
-    { id: '3.2',  label: '3.2 Visit↔A2C',       both: false },
-    { id: '3.3',  label: '3.3 A2C→Purchase',    both: false },
-    { id: '3.4',  label: '3.4 E2E Conv',         both: false },
     { id: '3.5',  label: '3.5 Cat Funnel',       both: false },
-    { id: '3.6',  label: '3.6 0-Order/High A2C', both: false },
-    { id: '3.7',  label: '3.7 0-A2C/High Visit', both: false },
     { id: '3.8',  label: '3.8 0-Conv Traffic',   both: false },
     { id: '3.9',  label: '3.9 Stage Class.',     both: false },
-    { id: '3.10', label: '3.10 Cart Gap',         both: false },
     { id: '3.11', label: '3.11 Visit Δ',          both: true  },
     { id: '3.12', label: '3.12 A2C Rate Δ',       both: true  },
     { id: '3.13', label: '3.13 Purchase Δ',       both: true  },
-    { id: '3.14', label: '3.14 Regression',       both: true  },
     { id: '3.15', label: '3.15 Lost Conv',         both: true  },
     { id: '3.16', label: '3.16 New Conv',          both: true  },
     { id: '3.17', label: '3.17 Cat Improvement',  both: true  },
@@ -973,61 +1213,6 @@ function Layer3({ layer3 }) {
           );
         })()}
 
-        {/* 3.2 */}
-        {active === '3.2' && (
-          <Card title="3.2 · Visit Rate vs A2C Rate (by Category)" badge="Each dot = 1 search term" insight={d('3.2').insight} insightType="info">
-            <FunnelScatter points={d('3.2').points||[]} height={340} />
-            <p className="text-xs text-gray-400 mt-2 text-center">Top-right: high visit + high A2C = ideal. Bottom-left: discovery + conversion problem.</p>
-          </Card>
-        )}
-
-        {/* 3.3 */}
-        {active === '3.3' && (() => {
-          const d33 = d('3.3');
-          return (
-            <Card title="3.3 · A2C → Purchase Rate (Top 20 by A2C Volume)" badge="Bar = A2C count · Rate overlay" insight={d33.insight} insightType="warn">
-              <VBarChart
-                labels={(d33.terms||[]).map(t => t.term_norm)}
-                data={(d33.terms||[]).map(t => t.a2c_count||0)}
-                colors={(d33.terms||[]).map(t => (t.purchase_rate||0) > 0.5 ? '#10b981' : (t.purchase_rate||0) > 0.2 ? '#f59e0b' : '#f43f5e')}
-                height={260}
-              />
-              <DataTable cols={[
-                { key:'term_norm',    label:'Term' },
-                { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
-                { key:'a2c_count',    label:'A2C', right:true, render:v=>fmt(v) },
-                { key:'orders',   label:'Orders', right:true, sortable:true, render:v=>fmt(v) },
-                { key:'purchase_rate',label:'Purchase Rate', right:true, render:v=><span className={`text-xs font-semibold ${(v||0)>0.5?'text-emerald-600':(v||0)>0.2?'text-amber-600':'text-rose-600'}`}>{fmtN((v||0)*100,1)}%</span> },
-                catCol(d33.terms||[]),
-              ]} rows={d33.terms||[]} />
-            </Card>
-          );
-        })()}
-
-        {/* 3.4 */}
-        {active === '3.4' && (() => {
-          const d34 = d('3.4');
-          const allRows34 = [...(d34.top20||[]), ...(d34.bottom20||[])];
-          const cols = [
-            { key:'term_norm',  label:'Term' },
-            { key:'searches',   label:'Searches', right:true, render:v=>fmt(v) },
-            { key:'visit_rate', label:'Visit %', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
-            { key:'a2c_rate_s', label:'A2C %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
-            { key:'e2e_conv',   label:'E2E Conv', right:true, render:v=><span className="font-semibold text-indigo-700">{fmtN((v||0)*100,3)}%</span> },
-            catCol(allRows34),
-          ];
-          return (
-            <>
-              <Card title="3.4 · Top 20 Converters (≥500 searches)" badge="Cleanest funnel" insight={d34.insight} insightType="success">
-                <DataTable cols={cols} rows={d34.top20||[]} />
-              </Card>
-              <Card title="3.4 · Bottom 20 Converters (≥500 searches)" badge="Highest opportunity" insightType="danger">
-                <DataTable cols={cols} rows={d34.bottom20||[]} />
-              </Card>
-            </>
-          );
-        })()}
-
         {/* 3.5 */}
         {active === '3.5' && (() => {
           const d35 = d('3.5');
@@ -1036,44 +1221,14 @@ function Layer3({ layer3 }) {
               <CatFunnelGrouped cats={d35.categories||[]} />
               <DataTable cols={[
                 { key:'category',         label:'Category' },
-                { key:'avg_visit_rate',   label:'Visit %', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
-                { key:'avg_a2c_rate',     label:'A2C %', right:true, render:v=>fmtN((v||0)*100,2)+'%' },
-                { key:'avg_e2e_conv',     label:'E2E', right:true, render:v=>fmtN((v||0)*100,3)+'%' },
-                { key:'searches',         label:'Searches', right:true, render:v=>fmt(v) },
-              ]} rows={(d35.categories||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' — Terms', terms:r.terms||[]})}))} maxH={280} />
-            </Card>
-          );
-        })()}
-
-        {/* 3.6 */}
-        {active === '3.6' && (() => {
-          const d36 = d('3.6');
-          return (
-            <Card title={`3.6 · Zero-Order Terms with High A2C (${d36.count||0} terms)`} badge="A2C ≥ 100, Orders = 0" insight={d36.insight} insightType="danger">
-              <DataTable cols={[
-                { key:'term_norm',    label:'Term' },
-                { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
-                { key:'search_visits',label:'Visits', right:true, render:v=>fmt(v) },
-                { key:'a2c_count',    label:'A2C', right:true, render:v=><span className="font-semibold text-amber-700">{fmt(v)}</span> },
-                { key:'orders',   label:'Orders', right:true, render:v=><span className="text-rose-600 font-bold">{fmt(v)}</span> },
-                catCol(d36.terms||[]),
-              ]} rows={d36.terms||[]} />
-            </Card>
-          );
-        })()}
-
-        {/* 3.7 */}
-        {active === '3.7' && (() => {
-          const d37 = d('3.7');
-          return (
-            <Card title={`3.7 · Zero-A2C Terms with High Search Visits (${d37.count||0} terms)`} badge="Visits ≥ 200, A2C = 0" insight={d37.insight} insightType="danger">
-              <DataTable cols={[
-                { key:'term_norm',    label:'Term' },
-                { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
-                { key:'search_visits',label:'Visits', right:true, render:v=><span className="font-semibold text-amber-700">{fmt(v)}</span> },
-                { key:'a2c_count',    label:'A2C', right:true, render:v=><span className="text-rose-600 font-bold">{fmt(v)}</span> },
-                catCol(d37.terms||[]),
-              ]} rows={d37.terms||[]} />
+                { key:'avg_visit_rate',   label:'Visit %', right:true, sortable:true, render:v=>fmtN((v||0)*100,1)+'%' },
+                { key:'delta_visit_rate', label:'Visit Δ', right:true, sortable:true, render:v=><DeltaRatePill v={v}/> },
+                { key:'avg_a2c_rate',     label:'A2C %', right:true, sortable:true, render:v=>fmtN((v||0)*100,2)+'%' },
+                { key:'delta_a2c_rate',   label:'A2C Δ', right:true, sortable:true, render:v=><DeltaRatePill v={v}/> },
+                { key:'avg_e2e_conv',     label:'E2E %', right:true, sortable:true, render:v=>fmtN((v||0)*100,3)+'%' },
+                { key:'delta_e2e_conv',   label:'E2E Δ', right:true, sortable:true, render:v=><DeltaRatePill v={v}/> },
+                { key:'searches',         label:'Searches', right:true, sortable:true, render:v=>fmt(v) },
+              ]} rows={(d35.categories||[]).map(r=>({...r, _onClick:()=>setDrill({title:r.category+' — Terms', terms:r.terms||[]})}))} maxH={320} />
             </Card>
           );
         })()}
@@ -1117,16 +1272,14 @@ function Layer3({ layer3 }) {
           const d39 = d('3.9');
           const stages = ['All', 'Stage 1 — Low Click-Through', 'Stage 2 — Low Cart Rate', 'Stage 3 — High Abandonment', 'Healthy'];
           const filtered = stageFilter === 'All' ? (d39.terms||[]) : (d39.terms||[]).filter(t => t.funnel_stage === stageFilter);
+          const top50 = (d39.terms || []).slice(0, 50);
+          const top50Stage1 = top50.filter(t => t.funnel_stage === 'Stage 1 — Low Click-Through').length;
+          const top50Stage2 = top50.filter(t => t.funnel_stage === 'Stage 2 — Low Cart Rate').length;
+          const top50Stage3 = top50.filter(t => t.funnel_stage === 'Stage 3 — High Abandonment').length;
+          const top50Healthy = top50.filter(t => t.funnel_stage === 'Healthy').length;
           return (
             <>
-              <Card title="3.9 · Funnel Stage Failure Distribution" insight={d39.insight} insightType="warn">
-                <DoughnutChart
-                  labels={(d39.stage_counts||[]).map(s => s.stage)}
-                  data={(d39.stage_counts||[]).map(s => s.count)}
-                  colors={['#f43f5e', '#f59e0b', '#fb923c', '#10b981']}
-                />
-              </Card>
-              <Card title="3.9 · Term Funnel Classification" badge="Filter by stage">
+              <Card title="3.9 · Term Funnel Classification" badge="Filter by stage" insight={d39.insight} insightType="warn">
                 <div className="flex flex-wrap gap-2 mb-4">
                   {stages.map(st => (
                     <button key={st} onClick={() => setStageFilter(st)}
@@ -1145,32 +1298,41 @@ function Layer3({ layer3 }) {
                   catCol(filtered),
                 ]} rows={filtered} maxH={400} />
               </Card>
+
+              <Card title="3.9 · Top 50 Search Terms Funnel Classification Analysis" badge="Top 50 by volume">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  <div className="bg-rose-50 border border-rose-100 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-rose-700">{top50Stage1}</p>
+                    <p className="text-xs text-rose-500 font-semibold mt-1">Stage 1 (Low CT)</p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-amber-700">{top50Stage2}</p>
+                    <p className="text-xs text-amber-500 font-semibold mt-1">Stage 2 (Low A2C)</p>
+                  </div>
+                  <div className="bg-orange-50 border border-orange-100 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-orange-700">{top50Stage3}</p>
+                    <p className="text-xs text-orange-500 font-semibold mt-1">Stage 3 (Abandon)</p>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-center">
+                    <p className="text-xl font-bold text-emerald-700">{top50Healthy}</p>
+                    <p className="text-xs text-emerald-500 font-semibold mt-1">Healthy</p>
+                  </div>
+                </div>
+                <DataTable cols={[
+                  { key:'term_norm',    label:'Term' },
+                  { key:'searches',     label:'Searches', right:true, render:v=>fmt(v) },
+                  { key:'visit_rate',   label:'Visit', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
+                  { key:'a2c_rate_v',   label:'A2C/Visit', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
+                  { key:'purchase_rate',label:'Purch/A2C', right:true, render:v=>fmtN((v||0)*100,1)+'%' },
+                  { key:'funnel_stage', label:'Stage', render:v=><StageBadge stage={v} /> },
+                  catCol(top50),
+                ]} rows={top50} maxH={400} />
+              </Card>
             </>
           );
         })()}
 
-        {/* 3.10 */}
-        {active === '3.10' && (() => {
-          const d310 = d('3.10');
-          return (
-            <Card title="3.10 · A2C-to-Purchase Gap (Cart Abandonment)" badge="Top 15 by absolute gap" insight={d310.insight} insightType="danger">
-              <HBarChart
-                labels={(d310.terms||[]).map(t => t.term_norm)}
-                data={(d310.terms||[]).map(t => t.a2c_abandon||0)}
-                colors="#f43f5e"
-                height={260}
-              />
-              <DataTable cols={[
-                { key:'term_norm',  label:'Term' },
-                { key:'a2c_count',  label:'A2C', right:true, render:v=>fmt(v) },
-                { key:'orders', label:'Orders', right:true, render:v=>fmt(v) },
-                { key:'a2c_abandon',label:'Abandoned Carts', right:true, render:v=><span className="font-semibold text-rose-600">{fmt(v)}</span> },
-                { key:'searches',   label:'Searches', right:true, render:v=>fmt(v) },
-                catCol(d310.terms||[]),
-              ]} rows={d310.terms||[]} />
-            </Card>
-          );
-        })()}
+
 
         {/* 3.11 */}
         {active === '3.11' && (() => {
@@ -1244,21 +1406,7 @@ function Layer3({ layer3 }) {
           );
         })()}
 
-        {/* 3.14 */}
-        {active === '3.14' && (() => {
-          const d314 = d('3.14');
-          return (
-            <Card title={`3.14 · Funnel Stage Regression (${d314.count||0} terms)`} badge="Any stage declined >10%" insight={d314.insight} insightType="danger">
-              <DataTable cols={[
-                { key:'term_norm',     label:'Term' },
-                { key:'searches',      label:'Searches', right:true, render:v=>fmt(v) },
-                { key:'stages_affected',label:'Stages Hit', right:true, render:v=><span className="font-bold text-rose-600">{v}</span> },
-                { key:'regressions',   label:'Detail', render:v=><span className="text-xs text-rose-800">{v}</span> },
-                catCol(d314.terms||[]),
-              ]} rows={d314.terms||[]} maxH={420} />
-            </Card>
-          );
-        })()}
+
 
         {/* 3.15 */}
         {active === '3.15' && (() => {
@@ -1339,10 +1487,10 @@ function DashboardHome({ summary, layer1 }) {
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         <Card title="Search Volume Concentration (1.2)" badge="Click slice" insight={layer1?.['1.2']?.insight}>
-          <DoughnutChart labels={vol.map(d=>d.name)} data={vol.map(d=>d.value)} colors={['#4f46e5','#7c3aed','#a855f7','#e879f9']} onClickIndex={i=>setDrill({title:vol[i]?.name+' — Terms',terms:vol[i]?.terms||[]})} />
+          <DoughnutChart labels={vol.map(d=>d.name)} data={vol.map(d=>d.value)} colors={['#4f46e5','#7c3aed','#a855f7','#e879f9']} tooltipSuffix=" searches" onClickIndex={i=>setDrill({title:vol[i]?.name+' — Terms',terms:vol[i]?.terms||[]})} />
         </Card>
         <Card title="Top Categories by Search Volume (1.3)" badge="Click bar" insight={layer1?.['1.3']?.insight}>
-          <HBarChart labels={cat3.slice(0,10).map(d=>d.category)} data={cat3.slice(0,10).map(d=>d.searches)} color="#6366f1" height={260} onClickIndex={i=>setDrill({title:(cat3[i]?.category||'')+' — Terms',terms:cat3[i]?.terms||[]})} />
+          <HBarChart labels={cat3.slice(0,10).map(d=>d.category)} data={cat3.slice(0,10).map(d=>d.searches)} color="#6366f1" height={260} overallTotal={summary.searches} tooltipSuffix=" searches" onClickIndex={i=>setDrill({title:(cat3[i]?.category||'')+' — Terms',terms:cat3[i]?.terms||[]})} />
         </Card>
       </div>
       {drill && <DrillModal title={drill.title} terms={drill.terms} onClose={()=>setDrill(null)} />}
@@ -1742,6 +1890,1443 @@ function Layer4({ trendsInputs }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WEEKLY TRENDS COMPONENTS & MODULE
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Sparkline({ values, width=80, height=28 }) {
+  const nums = values.filter(v => v !== null);
+  if (nums.length < 2) {
+    return <span className="text-xs text-gray-300">—</span>;
+  }
+  const min   = Math.min(...nums);
+  const max   = Math.max(...nums);
+  const range = max - min || 1;
+  const pad   = 3;
+  const w     = width  - pad * 2;
+  const h     = height - pad * 2;
+  const nVals = values.length;
+
+  const pts = values.map((v, i) => {
+    if (v === null) return null;
+    const x = pad + (i / (nVals - 1)) * w;
+    const y = pad + h - ((v - min) / range) * h;
+    return { x, y, v };
+  }).filter(Boolean);
+
+  const polyline = pts.map(p => `${p.x},${p.y}`).join(' ');
+  const first    = nums[0];
+  const last     = nums[nums.length - 1];
+  const color    = last > first ? '#10b981'
+                 : last < first ? '#ef4444'
+                 : '#9ca3af';
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`}
+         width={width} height={height}
+         style={{ display: 'block' }}>
+      <polyline points={polyline}
+                fill="none" stroke={color} strokeWidth="1.5"
+                strokeLinejoin="round" />
+      {pts.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r="2" fill={color} />
+      ))}
+    </svg>
+  );
+}
+
+function SparklineCell({ term, weeksMeta, orderedWids }) {
+  const [show, setShow] = useState(false);
+  const values = orderedWids.map(wid => {
+    const w = term.weeks.find(x => x && x.week_id === wid);
+    return w?.searches ?? null;
+  });
+
+  return (
+    <div className="relative inline-block"
+         onMouseEnter={() => setShow(true)}
+         onMouseLeave={() => setShow(false)}>
+      <Sparkline values={values} />
+
+      {show && (
+        <div className="absolute bottom-full left-0 mb-2 z-50
+                        bg-slate-900 text-white text-[10px]
+                        rounded-lg shadow-xl p-3.5
+                        min-w-[190px] pointer-events-none">
+          {weeksMeta.map((wm, i) => {
+            const searches = values[i];
+            const wow      = term.wowByWeek[i];
+            return (
+              <div key={wm.id}
+                   className="flex justify-between gap-4 py-0.5 border-b border-slate-800 last:border-0">
+                <span className="text-slate-400">
+                  {i === 0 ? `${wm.label} (base)` : wm.label}
+                </span>
+                <span className="font-semibold text-white">
+                  {searches != null
+                    ? searches.toLocaleString()
+                    : '—'}
+                </span>
+                {wow != null && (
+                  <span className={wow >= 0
+                    ? 'text-emerald-400 font-bold'
+                    : 'text-rose-400 font-bold'}>
+                    {wow >= 0 ? '+' : ''}{wow}%
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeltaPill({ v }) {
+  if (v === null || v === undefined)
+    return <span className="text-gray-300 text-xs">—</span>;
+  const up = v >= 0;
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold
+      ${up
+        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+        : 'bg-rose-50   text-rose-700   border border-rose-200'}`}>
+      {up ? '+' : ''}{v}%
+    </span>
+  );
+}
+
+function WeekDetailPanel({ term, weeksMeta, orderedWids, baselineWeekId }) {
+  const barRef = useRef(null);
+  const searches = orderedWids.map(wid => {
+    const w = term.weeks.find(x => x && x.week_id === wid);
+    return w?.searches ?? 0;
+  });
+  const labels = weeksMeta.map(w => w.label);
+
+  useChart(barRef, () => ({
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data: searches,
+        backgroundColor: orderedWids.map(wid =>
+          wid === baselineWeekId ? '#818cf8' : '#4f46e5'
+        ),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.y.toLocaleString()} searches`
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false },
+             ticks: { font: { size: 10 } } },
+        y: { grid: { color: '#f3f4f6' },
+             ticks: {
+               font: { size: 10 },
+               callback: v => v.toLocaleString()
+             }}
+      }
+    }
+  }), [JSON.stringify(searches)]);
+
+  return (
+    <div className="flex gap-6 items-center">
+      {/* Left: bar chart */}
+      <div style={{ width: 260, height: 140, flexShrink: 0 }}>
+        <canvas ref={barRef} />
+      </div>
+
+      {/* Right: detail table */}
+      <div className="flex-1 overflow-auto">
+        <table className="text-xs w-full text-left">
+          <thead>
+            <tr className="text-gray-400 font-medium border-b border-gray-200 text-[10px] uppercase tracking-wider">
+              <th className="pb-1 pr-4">Week</th>
+              <th className="pb-1 text-right pr-4">Searches</th>
+              <th className="pb-1 text-right pr-4">WoW</th>
+              <th className="pb-1 text-right pr-4">Visit %</th>
+              <th className="pb-1 text-right pr-4">A2C %</th>
+              <th className="pb-1 text-right">Purchase %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {weeksMeta.map((wm, i) => {
+              const w = term.weeks[i];
+              const isBase = wm.id === baselineWeekId;
+              return (
+                <tr key={wm.id}
+                    className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                  <td className={`py-1.5 pr-4 font-semibold
+                    ${isBase ? 'text-indigo-600 font-bold' : 'text-gray-700'}`}>
+                    {wm.label}{isBase && ' (base)'}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right font-semibold text-gray-800 tabular-nums">
+                    {w ? w.searches.toLocaleString() : '—'}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right">
+                    {term.wowByWeek[i] != null
+                      ? <DeltaPill v={term.wowByWeek[i]} />
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right text-gray-600 tabular-nums">
+                    {w ? (w.visit_rate * 100).toFixed(1) + '%' : '—'}
+                  </td>
+                  <td className="py-1.5 pr-4 text-right text-gray-600 tabular-nums">
+                    {w ? (w.a2c_rate_s * 100).toFixed(1) + '%' : '—'}
+                  </td>
+                  <td className="py-1.5 text-right text-gray-600 tabular-nums">
+                    {w ? (w.purchase_rate * 100).toFixed(1) + '%' : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BumpRankChart({ enrichedTerms, ranksMap, weeksMeta, orderedWids }) {
+  const SVG_W   = 680;
+  const SVG_H   = Math.max(340, enrichedTerms.length * 36 + 60);
+  const PAD_L   = 160;
+  const PAD_R   = 160;
+  const PAD_T   = 30;
+  const PAD_B   = 20;
+  const chartW  = SVG_W - PAD_L - PAD_R;
+  const chartH  = SVG_H - PAD_T - PAD_B;
+  const N       = enrichedTerms.length;
+  const nWeeks  = orderedWids.length;
+
+  const COLORS = [
+    '#4f46e5','#10b981','#f59e0b','#ef4444','#8b5cf6',
+    '#06b6d4','#84cc16','#ec4899','#f97316','#14b8a6'
+  ];
+
+  function xPos(weekIdx) {
+    if (nWeeks <= 1) return PAD_L + chartW / 2;
+    return PAD_L + (weekIdx / (nWeeks - 1)) * chartW;
+  }
+
+  function yPos(rank) {
+    if (N <= 1) return PAD_T + chartH / 2;
+    return PAD_T + ((rank - 1) / (N - 1)) * chartH;
+  }
+
+  if (nWeeks < 2) {
+    return (
+      <div className="text-center py-10 text-gray-500 text-sm font-semibold border rounded-lg bg-gray-50">
+        Rank chart requires at least 2 weeks selected.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${SVG_W} ${SVG_H}`} width="100%">
+        {weeksMeta.map((wm, i) => (
+          <text key={wm.id}
+                x={xPos(i)} y={PAD_T - 10}
+                textAnchor="middle"
+                fontSize="11" fill="#6b7280" fontWeight="500">
+            {wm.label}
+          </text>
+        ))}
+
+        {enrichedTerms.map((term, ti) => {
+          const color  = COLORS[ti % COLORS.length];
+          const ranks  = ranksMap[term.term_norm] || [];
+          const points = orderedWids.map((_, wi) => ({
+            x: xPos(wi),
+            y: yPos(ranks[wi] ?? N),
+            rank: ranks[wi] ?? null,
+            searches: term.weeks[wi]?.searches ?? null,
+          })).filter(p => p.rank !== null);
+
+          if (points.length < 2) return null;
+
+          const pathD = points.map((p, i) =>
+            i === 0 ? `M${p.x},${p.y}` : `L${p.x},${p.y}`
+          ).join(' ');
+
+          const firstRank = ranks[0] ?? null;
+          const lastRank  = ranks[orderedWids.length - 1] ?? null;
+
+          return (
+            <g key={term.term_norm}>
+              <path d={pathD} fill="none"
+                    stroke={color} strokeWidth="2"
+                    strokeLinejoin="round" opacity="0.85" />
+
+              {points.map((p, pi) => (
+                <g key={pi}>
+                  <circle cx={p.x} cy={p.y} r="5"
+                          fill={color} stroke="white"
+                          strokeWidth="1.5" />
+                  <text x={p.x} y={p.y} dy=".3em"
+                        textAnchor="middle"
+                        fontSize="8" fill="white" fontWeight="600">
+                    {p.rank}
+                  </text>
+                </g>
+              ))}
+
+              {firstRank !== null && (
+                <text x={PAD_L - 8}
+                      y={yPos(firstRank) + 4}
+                      textAnchor="end"
+                      fontSize="11" fill={color} fontWeight="500">
+                  {term.term_norm.length > 22
+                    ? term.term_norm.slice(0, 21) + '…'
+                    : term.term_norm}
+                </text>
+              )}
+
+              {lastRank !== null && (
+                <text x={SVG_W - PAD_R + 8}
+                      y={yPos(lastRank) + 4}
+                      textAnchor="start"
+                      fontSize="11" fill={color} fontWeight="500">
+                  #{lastRank}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+const LINE_COLORS = [
+  '#4f46e5', '#7c3aed', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#06b6d4', '#84cc16', '#ec4899', '#f97316', '#14b8a6',
+];
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function TermPill({ term, color, soloTerm, onToggle }) {
+  const isSolo   = soloTerm === term.term_norm;
+  const isFaded  = soloTerm !== null && !isSolo;
+  const wow      = term.latestWoW;  // number or null
+  const wowColor = wow > 0 ? '#10b981'
+                 : wow < 0 ? '#ef4444'
+                 : '#9ca3af';
+  return (
+    <button
+      onClick={() => onToggle(term.term_norm)}
+      style={{
+        display:        'flex',
+        alignItems:     'center',
+        gap:            '5px',
+        padding:        '4px 10px 4px 8px',
+        borderRadius:   '20px',
+        fontSize:       '11px',
+        fontWeight:     '500',
+        cursor:         'pointer',
+        border:         `0.5px solid ${isSolo
+                          ? color
+                          : color + '55'}`,
+        background:     isSolo
+                          ? hexToRgba(color, 0.1)
+                          : 'var(--color-background-primary)',
+        color:          isSolo
+                          ? color
+                          : 'var(--color-text-secondary)',
+        opacity:        isFaded ? 0.35 : 1,
+        transition:     'all 0.15s',
+      }}
+    >
+      {/* Colored dot */}
+      <span style={{
+        width: '8px', height: '8px',
+        borderRadius: '50%',
+        background: color,
+        flexShrink: 0,
+      }} />
+
+      {/* Term name */}
+      <span>{term.term_norm}</span>
+
+      {/* WoW delta badge — only when latestWoW is not null */}
+      {wow !== null && (
+        <span style={{
+          fontSize: '10px',
+          fontWeight: '600',
+          color: wowColor,
+        }}>
+          {wow >= 0 ? '+' : ''}{wow}%
+        </span>
+      )}
+    </button>
+  );
+}
+
+function TrendsModule() {
+  const [availableWeeks, setAvailableWeeks] = useState([]);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [selectedWeekIds, setSelectedWeekIds] = useState([]);
+  const [baselineWeekId, setBaselineWeekId] = useState(null);
+  const [trendsData, setTrendsData] = useState(null);
+  const [explorerData, setExplorerData] = useState(null);
+  const [materialData, setMaterialData] = useState(null);
+  const [allTermNames, setAllTermNames] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('top-terms');
+
+  const [soloTerm, setSoloTerm] = useState(null);
+  const instanceRef = useRef(null);
+
+  const [viewMode, setViewMode] = useState('table');
+  const [topN, setTopN] = useState(10);
+  const [expandedTerms, setExpandedTerms] = useState(new Set());
+
+  const [inputVal, setInputVal] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedTerms, setSelectedTerms] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const [gemWeekIdx, setGemWeekIdx] = useState(0);
+  const [rangeGroup, setRangeGroup] = useState(0);
+
+  const expRef = useRef(null);
+  const metalsRef = useRef(null);
+  const gemsRef = useRef(null);
+  const catsRef = useRef(null);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/weeks').then(r => r.json()),
+      fetch('/terms-list').then(r => r.json()),
+    ]).then(([weeksRes, termsRes]) => {
+      const weeks = weeksRes.weeks || [];
+      setAvailableWeeks(weeks);
+      const allIds = weeks.map(w => w.id);
+      setSelectedWeekIds(allIds);
+      if (weeks.length > 0) {
+        setBaselineWeekId(weeks[0].id);
+        setGemWeekIdx(weeks.length - 1);
+      }
+      setAllTermNames(termsRes.terms || []);
+      setInitialLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (selectedWeekIds.length === 0) return;
+    setLoading(true);
+    Promise.all([
+      fetch('/trends-weekly', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ week_ids: selectedWeekIds, top_n: 50 })
+      }).then(r => r.json()),
+      fetch('/trends-material', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ week_ids: selectedWeekIds })
+      }).then(r => r.json()),
+    ]).then(([td, md]) => {
+      setTrendsData(td);
+      setMaterialData(md);
+      setLoading(false);
+    });
+  }, [JSON.stringify(selectedWeekIds)]);
+
+  useEffect(() => {
+    if (selectedWeekIds.length === 0 || selectedTerms.length === 0) {
+      setExplorerData(null);
+      return;
+    }
+    fetch('/trends-weekly', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ week_ids: selectedWeekIds, terms: selectedTerms })
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'success') {
+          setExplorerData(data);
+        }
+      });
+  }, [JSON.stringify(selectedTerms), JSON.stringify(selectedWeekIds)]);
+
+  useEffect(() => {
+    if (!inputVal) {
+      setSuggestions([]);
+      return;
+    }
+    const query = inputVal.toLowerCase();
+    const prefixMatches = [];
+    const otherMatches = [];
+    
+    for (const t of allTermNames) {
+      const lower = t.toLowerCase();
+      if (lower.startsWith(query)) {
+        prefixMatches.push(t);
+      } else if (lower.includes(query)) {
+        otherMatches.push(t);
+      }
+    }
+    
+    const matches = [...prefixMatches, ...otherMatches].slice(0, 8);
+    console.log('Suggestions debug - query:', query, 'count:', matches.length, 'first few:', matches.slice(0, 3));
+    setSuggestions(matches);
+  }, [inputVal, allTermNames]);
+
+  const handleToggleWeek = (id) => {
+    let next;
+    if (selectedWeekIds.includes(id)) {
+      if (selectedWeekIds.length === 1) return;
+      next = selectedWeekIds.filter(x => x !== id);
+    } else {
+      next = [...selectedWeekIds, id];
+    }
+    setSelectedWeekIds(next);
+
+    if (selectedWeekIds.includes(id) && baselineWeekId === id) {
+      const remainingWeeks = availableWeeks.filter(w => next.includes(w.id));
+      if (remainingWeeks.length > 0) {
+        setBaselineWeekId(remainingWeeks[0].id);
+      }
+    }
+  };
+
+  const COLORS = [
+    '#4f46e5','#10b981','#f59e0b','#ef4444','#8b5cf6',
+    '#06b6d4','#84cc16','#ec4899','#f97316','#14b8a6'
+  ];
+
+  // (Moved early returns below hook declarations to comply with React hook rules)
+
+  const weeksMeta = trendsData?.weeks_meta || [];
+  const orderedWids = weeksMeta.map(w => w.id);
+  const baselineIdx = orderedWids.indexOf(baselineWeekId);
+  const latestIdx = orderedWids.length - 1;
+
+  const enrichedTerms = (trendsData?.terms || [])
+    .slice(0, topN)
+    .map(term => {
+      const weeks = orderedWids.map(wid => {
+        const w = (term.weeks || []).find(x => x && x.week_id === wid);
+        return w || null;
+      });
+
+      const baseSearches = weeks[baselineIdx]?.searches ?? null;
+      const latestSearches = weeks[latestIdx]?.searches ?? null;
+      const prevIdx = latestIdx - 1;
+      const prevSearches = prevIdx >= 0 ? (weeks[prevIdx]?.searches ?? null) : null;
+      const latestWoW = (latestSearches != null && prevSearches != null && prevSearches > 0)
+        ? Math.round((latestSearches - prevSearches) / prevSearches * 100)
+        : null;
+      const vsBaseline = (latestSearches != null && baseSearches != null && baseSearches > 0)
+        ? Math.round((latestSearches - baseSearches) / baseSearches * 100)
+        : null;
+
+      const wowByWeek = weeks.map((w, i) => {
+        if (i === 0 || w === null) return null;
+        const prev = weeks[i - 1];
+        if (!prev || prev.searches === 0) return null;
+        return Math.round((w.searches - prev.searches) / prev.searches * 100);
+      });
+
+      return {
+        ...term,
+        weeks,
+        baseSearches,
+        latestSearches,
+        latestWoW,
+        vsBaseline,
+        wowByWeek,
+      };
+    });
+
+  const ranksMap = {};
+  orderedWids.forEach((wid, wi) => {
+    const sorted = [...enrichedTerms]
+      .map(t => ({ term: t.term_norm, s: t.weeks[wi]?.searches ?? 0 }))
+      .sort((a, b) => b.s - a.s);
+    sorted.forEach((item, ri) => {
+      if (!ranksMap[item.term]) ranksMap[item.term] = [];
+      ranksMap[item.term][wi] = ri + 1;
+    });
+  });
+
+  const enrichedTerms_allFifty = (trendsData?.terms || [])
+    .map(term => {
+      const weeks = orderedWids.map(wid => {
+        const w = (term.weeks || []).find(x => x && x.week_id === wid);
+        return w || null;
+      });
+      const baseSearches = weeks[baselineIdx]?.searches ?? null;
+      const latestSearches = weeks[latestIdx]?.searches ?? null;
+      const prevIdx = latestIdx - 1;
+      const prevSearches = prevIdx >= 0 ? (weeks[prevIdx]?.searches ?? null) : null;
+      const latestWoW = (latestSearches != null && prevSearches != null && prevSearches > 0)
+        ? Math.round((latestSearches - prevSearches) / prevSearches * 100)
+        : null;
+      const vsBaseline = (latestSearches != null && baseSearches != null && baseSearches > 0)
+        ? Math.round((latestSearches - baseSearches) / baseSearches * 100)
+        : null;
+      return { ...term, weeks, baseSearches, latestSearches, latestWoW, vsBaseline };
+    });
+
+  const handleAddTerm = (name) => {
+    if (selectedTerms.length < 8 && !selectedTerms.includes(name)) {
+      setSelectedTerms([...selectedTerms, name]);
+    }
+    setInputVal('');
+    setShowSuggestions(false);
+  };
+
+  const handleRemoveTerm = (name) => {
+    setSelectedTerms(selectedTerms.filter(x => x !== name));
+  };
+
+  function handleRangeChange(idx) {
+    setSoloTerm(null);
+    setRangeGroup(idx);
+  }
+
+  const explorerTerms = selectedTerms.filter(termName => {
+    const termObj = explorerData?.terms?.find(t => t.term_norm === termName);
+    if (!termObj) return false;
+    const baseW = (termObj.weeks || []).find(w => w && w.week_id === baselineWeekId);
+    return baseW && baseW.searches > 0;
+  });
+
+  useChart(expRef, () => {
+    if (explorerTerms.length === 0 || !explorerData) return {};
+    const datasets = explorerTerms.map((termName, idx) => {
+      const termObj = explorerData.terms.find(t => t.term_norm === termName);
+      const baseW = termObj.weeks.find(x => x && x.week_id === baselineWeekId);
+      const baseVal = baseW ? baseW.searches : 0;
+
+      const data = orderedWids.map(wid => {
+        const w = termObj.weeks.find(x => x && x.week_id === wid);
+        if (!w) return null;
+        return baseVal > 0 ? (w.searches / baseVal) * 100 : 0;
+      });
+
+      return {
+        label: termName,
+        data,
+        borderColor: COLORS[idx % COLORS.length],
+        backgroundColor: COLORS[idx % COLORS.length],
+        tension: 0,
+        pointRadius: 6,
+        pointHoverRadius: 8,
+        spanGaps: false
+      };
+    });
+
+    datasets.push({
+      label: 'Baseline Reference',
+      data: orderedWids.map(() => 100),
+      borderColor: '#cbd5e1',
+      borderDash: [6, 4],
+      pointRadius: 0,
+      fill: false,
+      tension: 0
+    });
+
+    return {
+      type: 'line',
+      data: {
+        labels: weeksMeta.map(w => w.label),
+        datasets
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const label = ctx.dataset.label;
+                if (label === 'Baseline Reference') return null;
+                const idxVal = ctx.parsed.y.toFixed(0);
+                const termObj = explorerData.terms.find(t => t.term_norm === label);
+                const w = termObj.weeks[ctx.dataIndex];
+                const searches = w ? w.searches : 0;
+                let wowStr = '';
+                if (ctx.dataIndex > 0) {
+                  const prevW = termObj.weeks[ctx.dataIndex - 1];
+                  if (prevW && prevW.searches > 0) {
+                    const wow = Math.round((searches - prevW.searches) / prevW.searches * 100);
+                    wowStr = `  |  WoW: ${wow >= 0 ? '+' : ''}${wow}%`;
+                  }
+                }
+                return ` ${label}: Index ${idxVal}  |  ${searches.toLocaleString()} searches${wowStr}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: {
+            title: { display: true, text: 'Index (baseline = 100)', font: { size: 11 } },
+            grid: { color: '#f3f4f6' }
+          }
+        }
+      }
+    };
+  }, [activeTab, JSON.stringify(explorerTerms), baselineWeekId, JSON.stringify(orderedWids), explorerData]);
+
+  useChart(metalsRef, () => {
+    if (!materialData) return {};
+    const metalsList = ['Gold', 'Diamond', 'Silver', 'Platinum', 'Rose Gold', 'White Gold'];
+    const metalColors = {
+      'Gold': '#f59e0b', 'Diamond': '#60a5fa', 'Silver': '#94a3b8',
+      'Platinum': '#8b5cf6', 'Rose Gold': '#f43f5e', 'White Gold': '#64748b'
+    };
+
+    const datasets = metalsList.map(name => {
+      const data = (materialData.metals[name] || []).map(w => w.searches);
+      return {
+        label: name,
+        data,
+        borderColor: metalColors[name],
+        backgroundColor: metalColors[name],
+        tension: 0,
+        pointRadius: 5,
+        pointHoverRadius: 8,
+        spanGaps: false
+      };
+    });
+
+    return {
+      type: 'line',
+      data: {
+        labels: (materialData.weeks_meta || []).map(w => w.label),
+        datasets
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const label = ctx.dataset.label;
+                const val = ctx.parsed.y;
+                let wowStr = '';
+                if (ctx.dataIndex > 0) {
+                  const prevVal = ctx.dataset.data[ctx.dataIndex - 1];
+                  if (prevVal && prevVal > 0) {
+                    const wow = Math.round((val - prevVal) / prevVal * 100);
+                    wowStr = ` (${wow >= 0 ? '+' : ''}${wow}% WoW)`;
+                  }
+                }
+                return ` ${label}: ${val.toLocaleString()} searches${wowStr}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { grid: { color: '#f3f4f6' } }
+        }
+      }
+    };
+  }, [activeTab, JSON.stringify(materialData)]);
+
+  const gemWeeks = materialData?.weeks_meta || [];
+  useChart(gemsRef, () => {
+    if (!materialData || gemWeeks.length === 0) return {};
+    const gemstonesList = ['Ruby', 'Emerald', 'Sapphire', 'Pearl', 'Polki', 'Kundan', 'Tanzanite', 'Coral', 'Opal'];
+    const gemData = gemstonesList.map(name => {
+      const wVal = (materialData.gemstones[name] || [])[gemWeekIdx];
+      const searches = wVal ? wVal.searches : 0;
+      return { name, searches };
+    }).sort((a, b) => b.searches - a.searches);
+
+    return {
+      type: 'bar',
+      data: {
+        labels: gemData.map(g => g.name),
+        datasets: [{
+          data: gemData.map(g => g.searches),
+          backgroundColor: '#4f46e5',
+          borderRadius: 4,
+          barThickness: 14
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const name = ctx.label;
+                const val = ctx.parsed.x;
+                let wowStr = '';
+                if (gemWeekIdx > 0) {
+                  const prevW = (materialData.gemstones[name] || [])[gemWeekIdx - 1];
+                  const prevVal = prevW ? prevW.searches : 0;
+                  if (prevVal > 0) {
+                    const wow = Math.round((val - prevVal) / prevVal * 100);
+                    wowStr = ` (${wow >= 0 ? '+' : ''}${wow}% WoW)`;
+                  }
+                }
+                return ` Searches: ${val.toLocaleString()}${wowStr}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: '#f3f4f6' } },
+          y: { ticks: { font: { size: 11 } } }
+        }
+      }
+    };
+  }, [activeTab, JSON.stringify(materialData), gemWeekIdx]);
+
+  const mCats = materialData?.categories || {};
+  const sortedCatNames = Object.keys(mCats).sort((a, b) => {
+    const sumA = mCats[a].reduce((acc, x) => acc + x.searches, 0);
+    const sumB = mCats[b].reduce((acc, x) => acc + x.searches, 0);
+    return sumB - sumA;
+  });
+  const top8Cats = sortedCatNames.slice(0, 8);
+  const otherCats = sortedCatNames.slice(8);
+
+  useChart(catsRef, () => {
+    if (!materialData || Object.keys(mCats).length === 0) return {};
+    const mWeeks = materialData.weeks_meta || [];
+    
+    const datasets = top8Cats.map((catName, idx) => {
+      const data = mCats[catName].map(w => w.searches);
+      return {
+        label: catName,
+        data,
+        fill: true,
+        backgroundColor: `hsla(${idx * 45}, 70%, 60%, 0.3)`,
+        borderColor: `hsl(${idx * 45}, 70%, 50%)`,
+        tension: 0.1,
+        pointRadius: 3,
+        spanGaps: false
+      };
+    });
+
+    if (otherCats.length > 0) {
+      const otherData = mWeeks.map((_, wi) => {
+        return otherCats.reduce((acc, catName) => {
+          return acc + (mCats[catName][wi]?.searches || 0);
+        }, 0);
+      });
+      datasets.push({
+        label: 'Other',
+        data: otherData,
+        fill: true,
+        backgroundColor: 'rgba(156, 163, 175, 0.3)',
+        borderColor: '#9ca3af',
+        tension: 0.1,
+        pointRadius: 3,
+        spanGaps: false
+      });
+    }
+
+    return {
+      type: 'line',
+      data: {
+        labels: mWeeks.map(w => w.label),
+        datasets
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 10 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const label = ctx.dataset.label;
+                const val = ctx.parsed.y;
+                const total = ctx.chart.data.datasets.reduce((acc, ds) => acc + (ds.data[ctx.dataIndex] || 0), 0);
+                const pct = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
+                return ` ${label}: ${val.toLocaleString()} (${pct}%)`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: { display: false } },
+          y: { stacked: true, grid: { color: '#f3f4f6' } }
+        }
+      }
+    };
+  }, [activeTab, JSON.stringify(materialData)]);
+
+  const GROUPS = [
+    { label: 'Top 1–10',  start: 0  },
+    { label: '11–20',     start: 10 },
+    { label: '21–30',     start: 20 },
+    { label: '31–40',     start: 30 },
+    { label: '41–50',     start: 40 },
+  ];
+
+  const visibleGroups = GROUPS.filter(
+    g => enrichedTerms_allFifty.length > g.start
+  );
+
+  const groupTerms = enrichedTerms_allFifty.slice(
+    GROUPS[rangeGroup].start,
+    GROUPS[rangeGroup].start + 10
+  );
+
+  function buildDatasets(terms) {
+    return terms.map((t, i) => {
+      const color = LINE_COLORS[i];
+      return {
+        label:              t.term_norm,
+        data:               orderedWids.map(wid => {
+                              const w = t.weeks.find(
+                                x => x && x.week_id === wid
+                              );
+                              return w?.searches ?? null;
+                            }),
+        borderColor:        color,
+        backgroundColor:    color,
+        pointBackgroundColor: color,
+        borderWidth:        2.5,
+        pointRadius:        5,
+        pointHoverRadius:   7,
+        tension:            0,
+        spanGaps:           false,
+      };
+    });
+  }
+
+  useEffect(() => {
+    if (!canvasRef.current || activeTab !== 'volume-lines') return;
+    if (instanceRef.current) {
+      instanceRef.current.destroy();
+      instanceRef.current = null;
+    }
+
+    const labels = weeksMeta.map(w => w.label);
+
+    instanceRef.current = new Chart(canvasRef.current, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: buildDatasets(groupTerms),
+      },
+      options: {
+        responsive:          true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode:      'point',
+          intersect: true,
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e1b4b',
+            titleColor:      '#e0e7ff',
+            bodyColor:       '#c7d2fe',
+            padding:         12,
+            cornerRadius:    8,
+            displayColors:   false,
+            callbacks: {
+              title: items => items[0].dataset.label,
+              label: item  => {
+                const wi       = item.dataIndex;
+                const searches = item.raw;
+                const term     = groupTerms[item.datasetIndex];
+                if (!term) return '';
+                const prevW    = wi > 0
+                  ? (term.weeks.find(
+                      x => x && x.week_id === orderedWids[wi - 1]
+                    )?.searches ?? null)
+                  : null;
+                const wow = (prevW != null && prevW > 0)
+                  ? Math.round((searches - prevW) / prevW * 100)
+                  : null;
+                const lines = [
+                  `  ${weeksMeta[wi]?.label}`,
+                  `  ${searches != null
+                       ? searches.toLocaleString()
+                       : '—'} searches`,
+                ];
+                if (wow !== null) {
+                  lines.push(
+                    `  WoW: ${wow >= 0 ? '+' : ''}${wow}%`
+                  );
+                }
+                const vsBase = term.vsBaseline;
+                if (vsBase !== null) {
+                  lines.push(
+                    `  vs baseline: ${vsBase >= 0 ? '+' : ''}${vsBase}%`
+                  );
+                }
+                return lines;
+              },
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid:  { display: false },
+            ticks: { font: { size: 11 }, color: '#6b7280' },
+          },
+          y: {
+            grid:  { color: '#f3f4f6' },
+            border:{ display: false },
+            ticks: {
+              font:     { size: 11 },
+              color:    '#6b7280',
+              callback: v => v != null ? v.toLocaleString() : '',
+            },
+          }
+        },
+        onClick: (event, elements) => {
+          if (elements.length === 0) return;
+          const clickedTerm =
+            groupTerms[elements[0].datasetIndex]?.term_norm;
+          if (!clickedTerm) return;
+          setSoloTerm(prev =>
+            prev === clickedTerm ? null : clickedTerm
+          );
+        },
+      }
+    });
+
+    return () => {
+      if (instanceRef.current) {
+        instanceRef.current.destroy();
+        instanceRef.current = null;
+      }
+    };
+  }, [activeTab, rangeGroup, JSON.stringify(weeksMeta), JSON.stringify(orderedWids)]);
+
+  useEffect(() => {
+    const chart = instanceRef.current;
+    if (!chart) return;
+
+    chart.data.datasets.forEach((ds, i) => {
+      const color = LINE_COLORS[i];
+      if (soloTerm === null) {
+        ds.borderColor        = color;
+        ds.backgroundColor    = color;
+        ds.pointBackgroundColor = color;
+        ds.borderWidth        = 2.5;
+        ds.pointRadius        = 5;
+      } else if (ds.label === soloTerm) {
+        ds.borderColor        = color;
+        ds.backgroundColor    = color;
+        ds.pointBackgroundColor = color;
+        ds.borderWidth        = 3.5;
+        ds.pointRadius        = 6;
+      } else {
+        const faded           = hexToRgba(color, 0.1);
+        ds.borderColor        = faded;
+        ds.backgroundColor    = faded;
+        ds.pointBackgroundColor = faded;
+        ds.borderWidth        = 1;
+        ds.pointRadius        = 3;
+      }
+    });
+
+    chart.update('none');
+  }, [soloTerm]);
+
+  if (initialLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+        <p className="text-gray-500 text-xs font-medium">Loading trends dashboard…</p>
+      </div>
+    );
+  }
+
+  if (availableWeeks.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <p className="text-gray-500 text-sm font-medium">No weekly data uploaded yet.</p>
+        <a href="/admin" className="text-xs font-semibold text-indigo-600 hover:text-indigo-800">
+          Go to /admin to upload your first week.
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4 bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest mr-2">Toggle Weeks:</span>
+          {availableWeeks.map(w => {
+            const selected = selectedWeekIds.includes(w.id);
+            return (
+              <button key={w.id} onClick={() => handleToggleWeek(w.id)}
+                className={`text-left px-3 py-1.5 rounded-lg border transition-all ${selected ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'border-gray-200 text-gray-600 hover:border-indigo-400 bg-white'}`}>
+                <div className="text-xs font-bold">{w.label}</div>
+                <div className={`text-[10px] ${selected ? 'text-indigo-200' : 'text-gray-400'}`}>{(w.total_searches || 0).toLocaleString()} searches</div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Baseline:</label>
+          <select value={baselineWeekId || ''} onChange={e => setBaselineWeekId(Number(e.target.value))}
+            className="text-xs font-medium bg-white border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500">
+            {availableWeeks.filter(w => selectedWeekIds.includes(w.id)).map(w => (
+               <option key={w.id} value={w.id}>{w.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="flex gap-2 border-b border-gray-200">
+        {[
+          { id: 'top-terms', label: '📈 Top Terms' },
+          { id: 'explorer', label: '🔍 Term Explorer' },
+          { id: 'material', label: '💎 Material Pulse' },
+          { id: 'volume-lines', label: '📊 Volume Lines' }
+        ].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            className={`px-4 py-2 text-xs font-semibold transition-all border-b-2 -mb-[2px] ${activeTab === t.id ? 'border-indigo-600 text-indigo-600 font-bold' : 'border-transparent text-gray-500 hover:text-indigo-500'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <p className="text-gray-500 text-xs font-medium">Fetching trend data…</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          
+          {activeTab === 'top-terms' && trendsData && (
+            <>
+              <div className="flex items-center gap-4 mb-4">
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden text-xs">
+                  {[{id:'table',label:'Table + Sparklines'}, {id:'rank', label:'Rank chart'}].map(v => (
+                    <button key={v.id} onClick={() => setViewMode(v.id)}
+                            className={`px-3 py-2 font-medium transition-colors ${viewMode===v.id ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-indigo-50'}`}>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex border border-gray-200 rounded-lg overflow-hidden text-xs">
+                  {[10, 25, 50].map(n => (
+                    <button key={n} onClick={() => { setTopN(n); setExpandedTerms(new Set()); }}
+                            className={`px-3 py-2 font-medium transition-colors border-r border-gray-200 last:border-0 ${topN===n ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-indigo-50'}`}>
+                      Top {n}
+                    </button>
+                  ))}
+                </div>
+
+                <span className="text-xs text-gray-400 ml-auto font-medium">
+                  {viewMode === 'table' ? 'Click any row to expand week-by-week detail' : 'Rank index based on selected baseline'}
+                </span>
+              </div>
+
+              {viewMode === 'table' ? (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <table style={{ tableLayout:'fixed', width:'100%' }} className="text-xs text-left">
+                    <thead className="bg-gray-50 border-b border-gray-200 text-gray-500 font-medium">
+                      <tr>
+                        <th style={{width:36}}  className="px-3 py-2">#</th>
+                        <th className="px-3 py-2">Term</th>
+                        <th style={{width:106}}  className="px-3 py-2 text-center">Trend (hover)</th>
+                        <th style={{width:98}}  className="px-3 py-2 text-right">Latest WoW</th>
+                        <th style={{width:98}}  className="px-3 py-2 text-right">vs Baseline</th>
+                        <th style={{width:36}}  className="px-3 py-2 text-center"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {enrichedTerms.map((t, i) => {
+                        const isExpanded = expandedTerms.has(t.term_norm);
+                        return (
+                          <React.Fragment key={t.term_norm}>
+                            <tr className="border-b border-gray-100 cursor-pointer hover:bg-indigo-50 transition-colors"
+                              onClick={() => {
+                                setExpandedTerms(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(t.term_norm)) next.delete(t.term_norm);
+                                  else next.add(t.term_norm);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <td className="px-3 py-2 text-gray-400">{i+1}</td>
+                              <td className="px-3 py-2">
+                                <div className="font-bold text-gray-800">{t.term_norm}</div>
+                                <div className="text-[10px] text-gray-400 mt-0.5">{t.category}</div>
+                              </td>
+                              <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
+                                <SparklineCell term={t} weeksMeta={weeksMeta} orderedWids={orderedWids} />
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <DeltaPill v={t.latestWoW} />
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <DeltaPill v={t.vsBaseline} />
+                              </td>
+                              <td className="px-3 py-2 text-center text-gray-400 text-[10px]">
+                                {isExpanded ? '▲' : '▼'}
+                              </td>
+                            </tr>
+                            {isExpanded && (
+                              <tr className="bg-indigo-50/20 border-b border-gray-100">
+                                <td colSpan={6} className="px-4 py-4" onClick={e => e.stopPropagation()}>
+                                  <WeekDetailPanel term={t} weeksMeta={weeksMeta} orderedWids={orderedWids} baselineWeekId={baselineWeekId} />
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                  <BumpRankChart enrichedTerms={enrichedTerms} ranksMap={ranksMap} weeksMeta={weeksMeta} orderedWids={orderedWids} />
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'explorer' && trendsData && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+                <div className="relative">
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-2">Search Term</label>
+                  <input type="text" value={inputVal} onChange={e => setInputVal(e.target.value)} onFocus={() => setShowSuggestions(true)} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                    placeholder="Type term name to explore (e.g. gold ring)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-indigo-500" />
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-30 max-h-48 overflow-y-auto text-xs">
+                      {suggestions.map(s => (
+                        <div key={s} onMouseDown={() => handleAddTerm(s)} className="px-3 py-2 hover:bg-indigo-50 cursor-pointer transition-colors font-medium text-gray-800">
+                          {s}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2 items-center">
+                  {selectedTerms.map((t, idx) => {
+                    const color = COLORS[idx % COLORS.length];
+                    const termObj = explorerData?.terms?.find(item => item.term_norm === t);
+                    const baseW = termObj?.weeks?.find(w => w && w.week_id === baselineWeekId);
+                    const hasBaselineData = baseW && baseW.searches > 0;
+                    return (
+                      <span key={t} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border" style={{ borderColor: color, color: color, backgroundColor: `${color}0d` }}>
+                        {t}
+                        {explorerData && !hasBaselineData && (
+                          <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-300 rounded px-1 py-0.5 font-bold">
+                            No data in baseline week
+                          </span>
+                        )}
+                        <button onClick={() => handleRemoveTerm(t)} className="hover:opacity-70 font-bold ml-1">×</button>
+                      </span>
+                    );
+                  })}
+                  {selectedTerms.length === 0 && (
+                    <p className="text-xs text-gray-400 py-1">Type to search and add terms to compare (max 8 terms)</p>
+                  )}
+                </div>
+              </div>
+
+              {selectedTerms.length > 0 && (
+                <>
+                  {!explorerData ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-center space-y-3 bg-white rounded-xl border border-gray-200 shadow-sm">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                      <p className="text-gray-500 text-xs font-medium">Loading term data…</p>
+                    </div>
+                  ) : explorerTerms.length > 0 ? (
+                    <Card title="Term Explorer — Indexed search interest over time" badge="Index base = 100">
+                      <div style={{ height: 320 }}><canvas ref={expRef} /></div>
+                    </Card>
+                  ) : (
+                    <div className="text-center py-10 text-gray-500 text-xs font-semibold border rounded-lg bg-gray-50">
+                      Add terms that have search data in the selected baseline week to compare.
+                    </div>
+                  )}
+
+                  {explorerData && (
+                    <div className="flex gap-4 overflow-x-auto py-2">
+                      {selectedTerms.map((termName, i) => {
+                        const color = COLORS[i % COLORS.length];
+                        const termObj = explorerData.terms.find(t => t.term_norm === termName);
+                        if (!termObj) return null;
+                        
+                        const weeks = orderedWids.map(wid => {
+                          const w = (termObj.weeks || []).find(x => x && x.week_id === wid);
+                          return w || null;
+                        });
+
+                        const baseVal = weeks[baselineIdx]?.searches ?? 0;
+                        const latestVal = weeks[latestIdx]?.searches ?? 0;
+                        
+                        let peakVal = -1;
+                        let peakLabel = '—';
+                        weeks.forEach((w, idx) => {
+                          if (w && w.searches > peakVal) {
+                            peakVal = w.searches;
+                            peakLabel = weeksMeta[idx]?.label || '—';
+                          }
+                        });
+
+                        const overallChange = baseVal > 0 ? Math.round((latestVal - baseVal) / baseVal * 100) : null;
+
+                        return (
+                          <div key={termName} className="min-w-[180px] bg-white border border-gray-200 rounded-xl p-3 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+                            <div>
+                              <p className="text-xs font-bold truncate" style={{ color }}>{termName}</p>
+                              <div className="mt-2 space-y-1 text-[11px] text-gray-500">
+                                <div className="flex justify-between"><span>Base:</span><span className="font-semibold text-gray-700">{baseVal.toLocaleString()}</span></div>
+                                <div className="flex justify-between"><span>Latest:</span><span className="font-semibold text-gray-700">{latestVal.toLocaleString()}</span></div>
+                                <div className="flex justify-between font-medium"><span>Peak:</span><span className="text-gray-700 truncate">{peakLabel} ({peakVal.toLocaleString()})</span></div>
+                              </div>
+                            </div>
+                            <div className="mt-3 border-t pt-2 flex justify-between items-center">
+                              <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">Overall:</span>
+                              <DeltaPill v={overallChange} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'material' && materialData && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Card title="Metallic Queries Trend — absolute search volume" badge="Includes Rose/White Gold">
+                <div style={{ height: 280 }}><canvas ref={metalsRef} /></div>
+                <p className="text-[10px] text-gray-400 mt-2 italic">Searches mentioning each keyword — a term can appear in multiple metal groups</p>
+              </Card>
+
+              <Card title="Gemstone queries distribution for selected week">
+                <div className="flex flex-wrap gap-1 mb-4 overflow-x-auto py-1">
+                  {gemWeeks.map((w, idx) => (
+                    <button key={w.id} onClick={() => setGemWeekIdx(idx)}
+                      className={`text-[10px] px-2.5 py-1 rounded-full font-semibold border transition-all ${gemWeekIdx === idx ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600 hover:border-indigo-400 bg-white'}`}>
+                      {w.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ height: 280 }}><canvas ref={gemsRef} /></div>
+              </Card>
+
+              <Card title="Category Search share trend" badge="Top 8 categories + Other" className="lg:col-span-2">
+                <div style={{ height: 320 }}><canvas ref={catsRef} /></div>
+              </Card>
+            </div>
+          )}
+
+          {activeTab === 'volume-lines' && trendsData && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+              {/* Title row */}
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Search volume trend —{' '}
+                    {GROUPS[rangeGroup].label.toLowerCase()}
+                  </h3>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5 text-right">
+                  Absolute searches per week · click any term to isolate it
+                </p>
+              </div>
+
+              {/* Range pills */}
+              <div style={{ display:'flex', gap:'6px', marginBottom:'14px' }}>
+                {visibleGroups.map((g, i) => (
+                  <button
+                    key={g.label}
+                    onClick={() => handleRangeChange(i)}
+                    className={`text-xs px-3 py-1.5 rounded-full font-medium border transition-colors
+                      ${rangeGroup === i
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                      }`}
+                  >
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Term pills */}
+              <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'12px' }}>
+                {groupTerms.map((t, i) => (
+                  <TermPill
+                    key={t.term_norm}
+                    term={t}
+                    color={LINE_COLORS[i]}
+                    soloTerm={soloTerm}
+                    onToggle={term => setSoloTerm(
+                      prev => prev === term ? null : term
+                    )}
+                  />
+                ))}
+              </div>
+
+              {/* Chart */}
+              <div style={{ position:'relative', width:'100%', height:'300px' }}>
+                <canvas
+                  ref={canvasRef}
+                  role="img"
+                  aria-label={`Search volume trend for ${GROUPS[rangeGroup].label} terms`}
+                >
+                  Search volume trends across weeks.
+                </canvas>
+              </div>
+
+              {/* Hint */}
+              <p className="text-xs text-gray-400 text-center mt-2">
+                {soloTerm
+                  ? `Showing: "${soloTerm}" — click again to reset`
+                  : 'Click a term pill or line to isolate · hover for week detail'}
+              </p>
+            </div>
+          )}
+
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN APP
 // ─────────────────────────────────────────────────────────────────────────────
 const NAV = [
@@ -1750,13 +3335,29 @@ const NAV = [
   { id: 'layer2', label: '📂 Layer 2: Categories' },
   { id: 'layer3', label: '🔻 Layer 3: Funnel' },
   { id: 'layer4', label: '📈 Layer 4: Trends' },
+  { id: 'trends', label: '📊 Weekly Trends' },
 ];
 
 function App() {
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(() => {
+    try {
+      const saved = localStorage.getItem('search_intel_result');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
   const [tab, setTab]       = useState('home');
 
-  if (!result) return <UploadScreen onResult={setResult} />;
+  const handleSetResult = (res) => {
+    try {
+      if (res) localStorage.setItem('search_intel_result', JSON.stringify(res));
+      else localStorage.removeItem('search_intel_result');
+    } catch (e) {}
+    setResult(res);
+  };
+
+  if (!result) return <UploadScreen onResult={handleSetResult} />;
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -1780,7 +3381,7 @@ function App() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm flex-shrink-0">
           <span className="text-sm font-semibold text-gray-600">{NAV.find(n=>n.id===tab)?.label}</span>
-          <button onClick={()=>setResult(null)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">← New Analysis</button>
+          <button onClick={()=>handleSetResult(null)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">← New Analysis</button>
         </header>
         <main className="flex-1 overflow-y-auto p-6">
           {tab==='home'   && <DashboardHome summary={result.summary} layer1={result.layer1} />}
@@ -1788,6 +3389,7 @@ function App() {
           {tab==='layer2' && <Layer2 layer2={result.layer2} />}
           {tab==='layer3' && <Layer3 layer3={result.layer3} />}
           {tab==='layer4' && <Layer4 trendsInputs={result.trends_inputs} />}
+          {tab==='trends' && <TrendsModule />}
         </main>
       </div>
     </div>

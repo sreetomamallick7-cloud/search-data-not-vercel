@@ -75,22 +75,84 @@ def run_layer1(df_curr, df_prev):
     if df_curr is None or df_curr.empty:
         return res
 
+    df_curr = df_curr.copy()
+
+    # Step A — Ensure these columns exist on df_curr before the top50 slice.
+    df_curr['visit_rate']    = (df_curr['search_visits'] /
+                                df_curr['searches'].replace(0, np.nan)
+                               ).fillna(0).round(4)
+
+    df_curr['a2c_rate_s']    = (df_curr['a2c_count'] /
+                                df_curr['searches'].replace(0, np.nan)
+                               ).fillna(0).round(4)
+
+    df_curr['purchase_rate'] = np.where(
+        df_curr['a2c_count'] > 0,
+        (df_curr['orders'] / df_curr['a2c_count']).round(4),
+        np.nan
+    )
+
     total = df_curr['searches'].sum()
 
     # -- 1.1 Top 50 Terms -------------------------------------------------------
+    # Step B — Compute WEIGHTED site-level averages from the FULL df_curr
+    total_searches   = float(df_curr['searches'].sum())
+    total_visits     = float(df_curr['search_visits'].sum())
+    total_a2c        = float(df_curr['a2c_count'].sum())
+    total_orders     = float(df_curr['orders'].sum())
+
+    avg_visit_rate    = round(total_visits  / max(total_searches, 1), 4)
+    avg_a2c_rate      = round(total_a2c     / max(total_searches, 1), 4)
+    avg_purchase_rate = round(total_orders  / max(total_a2c, 1),      4)
+
+    # Step C — Build res['1.1'] as a dict:
     top50 = df_curr.sort_values('searches', ascending=False).head(50).copy()
+
+    # If prev period exists, merge in prev_searches and compute growth
     if df_prev is not None and not df_prev.empty:
-        prev_searches = df_prev[['term_norm', 'searches']].rename(columns={'searches': 'prev_searches'})
-        top50 = pd.merge(top50, prev_searches, on='term_norm', how='left').fillna({'prev_searches': 0})
-        top50['searches_growth'] = ((top50['searches'] - top50['prev_searches']) / (top50['prev_searches'] + 1)) * 100
-        top50['searches_growth'] = top50['searches_growth'].round(2)
+        prev_cols = df_prev[['term_norm', 'searches']].rename(
+            columns={'searches': 'prev_searches'})
+        top50 = top50.merge(prev_cols, on='term_norm', how='left')
+        top50['prev_searches']   = top50['prev_searches'].fillna(0)
+        top50['searches_growth'] = (
+            (top50['searches'] - top50['prev_searches']) /
+            (top50['prev_searches'].replace(0, np.nan))
+        ) * 100
     else:
-        top50['prev_searches'] = 0.0
+        top50['prev_searches']   = None
         top50['searches_growth'] = None
-    res['1.1'] = top50[['term_norm', 'searches', 'prev_searches', 'searches_growth', 'category', 'a2c_count', 'orders']].to_dict(orient='records')
+
+    res['1.1'] = {
+        'terms': top50[[
+            'term_norm', 'category', 'searches', 'prev_searches',
+            'searches_growth', 'a2c_count', 'orders',
+            'visit_rate', 'a2c_rate_s', 'purchase_rate'
+        ]].to_dict(orient='records'),
+
+        'thresholds': {
+            'visit_rate':    avg_visit_rate,
+            'a2c_rate':      avg_a2c_rate,
+            'purchase_rate': avg_purchase_rate,
+        }
+    }
+
+    # NOTE: searches_growth may be None/NaN for terms with no prev data.
+    # Convert NaN to None explicitly before serialisation:
+    import math
+    for row in res['1.1']['terms']:
+        if row.get('searches_growth') is not None:
+            if isinstance(row['searches_growth'], float) and math.isnan(row['searches_growth']):
+                row['searches_growth'] = None
+        if row.get('prev_searches') is not None:
+            if isinstance(row['prev_searches'], float) and math.isnan(row['prev_searches']):
+                row['prev_searches'] = None
+        if row.get('purchase_rate') is not None:
+            if isinstance(row['purchase_rate'], float) and math.isnan(row['purchase_rate']):
+                row['purchase_rate'] = None
 
     # -- 1.2 Volume Concentration -----------------------------------------------
     sorted_df = df_curr.sort_values('searches', ascending=False).reset_index(drop=True)
+    sorted_df['visit_rate'] = (sorted_df['search_visits'] / sorted_df['searches'].replace(0, np.nan)).fillna(0)
     t10  = float(sorted_df.iloc[:10]['searches'].sum())
     t50  = float(sorted_df.iloc[10:50]['searches'].sum())
     t100 = float(sorted_df.iloc[50:100]['searches'].sum())
@@ -100,10 +162,10 @@ def run_layer1(df_curr, df_prev):
     top_term_s = float(sorted_df.iloc[0]['searches']) if len(sorted_df) > 0 else 0
     res['1.2'] = {
         'chart': [
-            {'name': 'Top 10',     'value': t10,  'terms': sorted_df.iloc[:10][['term_norm','searches','a2c_count','orders']].to_dict(orient='records')},
-            {'name': 'Top 11–50',  'value': t50,  'terms': sorted_df.iloc[10:50][['term_norm','searches','a2c_count','orders']].to_dict(orient='records')},
-            {'name': 'Top 51–100', 'value': t100, 'terms': sorted_df.iloc[50:100][['term_norm','searches','a2c_count','orders']].to_dict(orient='records')},
-            {'name': 'Long Tail',  'value': max(0, lt), 'terms': sorted_df.iloc[100:][['term_norm','searches','a2c_count','orders']].to_dict(orient='records')},
+            {'name': 'Top 10',     'value': t10,  'terms': sorted_df.iloc[:10][['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records')},
+            {'name': 'Top 11–50',  'value': t50,  'terms': sorted_df.iloc[10:50][['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records')},
+            {'name': 'Top 51–100', 'value': t100, 'terms': sorted_df.iloc[50:100][['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records')},
+            {'name': 'After 100 search key terms', 'value': max(0, lt), 'terms': sorted_df.iloc[100:][['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records')},
         ],
         'insight': _insight_concentration(top10_pct, top_term, _safe_pct(top_term_s, total))
     }
@@ -123,24 +185,11 @@ def run_layer1(df_curr, df_prev):
                       f"but generates only {rev_share:.1f}% of revenue, indicating a {gap}.")
     chart_13 = []
     for _, r in cat.iterrows():
-        sub = df_curr[df_curr['category'] == r['category']].sort_values('searches', ascending=False).head(30)
-        chart_13.append({**r.to_dict(), 'terms': sub[['term_norm','searches','a2c_count','orders']].to_dict(orient='records')})
+        sub = df_curr[df_curr['category'] == r['category']].sort_values('searches', ascending=False).head(30).copy()
+        sub['visit_rate'] = (sub['search_visits'] / sub['searches'].replace(0, np.nan)).fillna(0)
+        chart_13.append({**r.to_dict(), 'terms': sub[['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records')})
         
     res['1.3'] = {'chart': chart_13, 'insight': insight_13}
-
-    # -- 1.4 Category Search Share ----------------------------------------------
-    cat14 = cat.copy().head(9)
-    other_s = cat.iloc[9:]['searches'].sum() if len(cat) > 9 else 0
-    if other_s > 0:
-        other_row = pd.DataFrame([{'category': 'General Jewellery', 'searches': other_s, 'search_share': _safe_pct(other_s, total)}])
-        cat14 = pd.concat([cat14, other_row], ignore_index=True)
-    flags = []
-    for _, row in cat.iterrows():
-        if row['search_share'] > 30:
-            flags.append(f"'{row['category']}' dominates at {row['search_share']:.1f}% — over-indexing risk.")
-        elif row['search_share'] < 2:
-            flags.append(f"'{row['category']}' has only {row['search_share']:.1f}% share — under-demand or unlaunched category.")
-    res['1.4'] = {'chart': cat14[['category', 'searches', 'search_share']].fillna(0).to_dict(orient='records'), 'flags': flags}
 
     # -- 1.5 Long-Tail ----------------------------------------------------------
     lt_df  = df_curr[df_curr['is_long_tail'] == True]
@@ -201,14 +250,6 @@ def run_layer1(df_curr, df_prev):
                    f"'{top_occ['occasion']}' leads with {int(top_occ['searches']):,} searches." if top_occ else "No occasion-linked terms detected.")
     }
 
-    # -- 1.7 Spelling Variant Grouping ------------------------------------------
-    clusters = _cluster_spelling_variants(df_curr['term_norm'], df_curr['searches'])
-    res['1.7'] = {
-        'clusters': clusters,
-        'insight': (f"Search demand for '{clusters[0]['top_variant']}' is fragmented across {clusters[0]['variant_count']} variants. "
-                   f"True combined demand is {_safe_pct(clusters[0]['combined_searches'] - clusters[0]['top_variant_searches'], clusters[0]['top_variant_searches']):.1f}% "
-                   f"higher than the top variant alone suggests." if clusters else "No significant spelling variants detected.")
-    }
 
     # ── Period comparisons (need both) ──────────────────────────────────────────
     if df_prev is None or df_prev.empty:
@@ -221,15 +262,6 @@ def run_layer1(df_curr, df_prev):
     ).fillna(0)
     merged['growth'] = ((merged['searches'] - merged['prev_searches']) / (merged['prev_searches'] + 1)) * 100
 
-    # -- 1.8 WoW/MoM Change Per Term -------------------------------------------
-    valid = merged[(merged['searches'] >= 100) | (merged['prev_searches'] >= 100)].copy()
-    gainers = valid.sort_values('growth', ascending=False).head(15)
-    losers  = valid.sort_values('growth', ascending=True).head(15)
-    res['1.8'] = {
-        'gainers': gainers[['term_norm','prev_searches','searches','growth']].to_dict(orient='records'),
-        'losers':  losers[['term_norm','prev_searches','searches','growth']].to_dict(orient='records'),
-        'insight': (f"'{gainers.iloc[0]['term_norm']}' grew {gainers.iloc[0]['growth']:.1f}% MoM — the highest growth in the dataset." if len(gainers) > 0 else '')
-    }
 
     # -- 1.9 Rising Terms -------------------------------------------------------
     rising = merged[(merged['growth'] > 20) & (merged['searches'] >= 200) & (merged['prev_searches'] > 0)]
@@ -257,35 +289,16 @@ def run_layer1(df_curr, df_prev):
                    f"{int(has_purchase)} of them already have purchases — strong organic product-market fit signal.")
     }
 
-    # -- 1.12 Vanishing Terms ---------------------------------------------------
-    vanished = merged[(merged['searches'] == 0) & (merged['prev_searches'] > 0) & (merged['orders'] > 0)]
-    res['1.12'] = {
-        'terms': vanished.sort_values('prev_searches', ascending=False).head(20)[['term_norm','prev_searches','searches','orders']].to_dict(orient='records'),
-        'insight': (f"{len(vanished)} revenue-generating terms disappeared from search this period. "
-                   f"Investigate whether catalog was removed or external demand shifted.")
-    }
-
     # -- 1.13 Breakout Detection ------------------------------------------------
     breakouts = merged[(merged['growth'] > 100) & (merged['prev_searches'] > 0)].sort_values('growth', ascending=False)
+    b300 = breakouts[breakouts['searches'] >= 300]
+    b100 = breakouts[(breakouts['searches'] >= 100) & (breakouts['searches'] < 300)]
     res['1.13'] = {
-        'terms': breakouts[['term_norm','prev_searches','searches','growth','category','a2c_count','orders']].to_dict(orient='records'),
-        'insight': (f"{len(breakouts)} terms show 100%+ MoM growth. These are highest priority for catalog deepening and marketing amplification.")
+        'terms_300': b300[['term_norm','prev_searches','searches','growth','category','a2c_count','orders']].to_dict(orient='records'),
+        'terms_100': b100[['term_norm','prev_searches','searches','growth','category','a2c_count','orders']].to_dict(orient='records'),
+        'insight': f"{len(b300)} high-volume breakouts (≥300 searches) and {len(b100)} low-volume breakouts (100–299 searches) detected."
     }
 
-    # -- 1.14 Category Share Shift ----------------------------------------------
-    curr_cat = df_curr.groupby('category')['searches'].sum().reset_index()
-    prev_cat = df_prev.groupby('category')['searches'].sum().reset_index()
-    curr_cat['curr_share'] = curr_cat['searches'] / curr_cat['searches'].sum() * 100
-    prev_cat['prev_share'] = prev_cat['searches'] / prev_cat['searches'].sum() * 100
-    shift = pd.merge(curr_cat[['category','curr_share']], prev_cat[['category','prev_share']], on='category', how='outer').fillna(0)
-    shift['delta'] = shift['curr_share'] - shift['prev_share']
-    shift = shift.sort_values('delta', ascending=False)
-    top_shift = shift.iloc[0].to_dict() if len(shift) > 0 else None
-    res['1.14'] = {
-        'chart': shift.to_dict(orient='records'),
-        'insight': (f"'{top_shift['category']}' gained {top_shift['delta']:.1f}pp of search share — the highest shift. "
-                   f"Monitor whether this is seasonal, trend-driven, or campaign-driven." if top_shift is not None else '')
-    }
 
     return res
 
@@ -305,7 +318,6 @@ def run_layer2(df_curr, df_prev):
     total_rev = df_curr['usd_revenue'].sum() if 'usd_revenue' in df_curr.columns else 0
     site_conv = _safe_pct(df_curr['orders'].sum(), total_s)
 
-    # ── 2.1 Unique Search Term Variations Per Category ──────────────────────────
     cat_agg = df_curr.groupby('category').agg(
         unique_terms=('term_norm','count'),
         searches=('searches','sum'),
@@ -313,79 +325,7 @@ def run_layer2(df_curr, df_prev):
         orders=('orders','sum'),
         revenue=('usd_revenue','sum')
     ).reset_index()
-    cat_agg['searches_per_term'] = (cat_agg['searches'] / cat_agg['unique_terms'].replace(0, np.nan)).round(1)
-    cat_agg['search_share']      = cat_agg['searches'].apply(lambda x: _safe_pct(x, total_s))
-    cat_agg['a2c_share']         = cat_agg['a2c_count'].apply(lambda x: _safe_pct(x, total_a2c))
-    cat_agg['revenue_share']     = cat_agg['revenue'].apply(lambda x: _safe_pct(x, total_rev))
-    cat_agg['conversion_rate']   = (cat_agg['orders'] / cat_agg['searches'].replace(0, np.nan) * 100).round(3)
 
-    top21 = cat_agg.sort_values('unique_terms', ascending=False).iloc[0].to_dict() if len(cat_agg) > 0 else None
-
-    # Helper: drill-down terms per category (defined once, reused everywhere)
-    def _cat_terms(cat_name):
-        sub = df_curr[df_curr['category'] == cat_name]
-        return sub.sort_values('searches', ascending=False).head(30)[['term_norm','searches','a2c_count','orders']].to_dict(orient='records')
-
-    table_21 = []
-    for _, r in cat_agg.fillna(0).sort_values('searches', ascending=False).iterrows():
-        table_21.append({**r.to_dict(), 'terms': _cat_terms(r['category'])})
-    res['2.1'] = {
-        'table': table_21,
-        'insight': (f"'{top21['category']}' has {int(top21['unique_terms'])} unique search variations — "
-                    f"the widest vocabulary in the dataset. This suggests high user intent diversity "
-                    f"and a need for broad catalog coverage." if top21 is not None else '')
-    }
-
-    # ── 2.2 Category Conversion Rate Benchmark ──────────────────────────────────
-    conv_sorted = cat_agg.sort_values('conversion_rate', ascending=False).fillna(0)
-    top_c  = conv_sorted.iloc[0].to_dict()  if len(conv_sorted) > 0 else None
-    bot_c  = conv_sorted.iloc[-1].to_dict() if len(conv_sorted) > 1 else None
-    gap    = round(top_c['conversion_rate'] / bot_c['conversion_rate'], 1) if bot_c is not None and bot_c['conversion_rate'] > 0 else 0
-
-
-    conv_rows = []
-    for _, r in conv_sorted.iterrows():
-        conv_rows.append({**r.to_dict(), 'terms': _cat_terms(r['category'])})
-
-    res['2.2'] = {
-        'table': conv_rows,
-        'insight': (f"Top converting category: '{top_c['category']}' at {top_c['conversion_rate']:.2f}%. "
-                    f"Bottom: '{bot_c['category']}' at {bot_c['conversion_rate']:.2f}%. "
-                    f"Gap of {gap}x between best and worst — opportunity to apply top-category "
-                    f"merchandising patterns to underperformers." if top_c is not None and bot_c is not None else '')
-    }
-
-    # ── 2.3 Category Revenue Share ───────────────────────────────────────────────
-    rev_sorted = cat_agg.sort_values('revenue', ascending=False).fillna(0)
-    # Find highest density (revenue_share / search_share)
-    rev_sorted['density'] = (rev_sorted['revenue_share'] / rev_sorted['search_share'].replace(0, np.nan)).round(2)
-    top_dens  = rev_sorted.sort_values('density', ascending=False).iloc[0].to_dict() if len(rev_sorted) > 0 else None
-    mon_gap   = rev_sorted[rev_sorted['search_share'] - rev_sorted['revenue_share'] > 10]
-    mon_row   = mon_gap.sort_values('search_share', ascending=False).iloc[0].to_dict() if len(mon_gap) > 0 else None
-
-    rev_rows = []
-    for _, r in rev_sorted.iterrows():
-        rev_rows.append({**r.to_dict(), 'terms': _cat_terms(r['category'])})
-
-    res['2.3'] = {
-        'table': rev_rows,
-        'insight': (
-            (f"'{top_dens['category']}' generates {top_dens['revenue_share']:.1f}% of revenue "
-             f"from {top_dens['search_share']:.1f}% of searches — highest revenue density. " if top_dens is not None else '') +
-            (f"'{mon_row['category']}' has {mon_row['search_share']:.1f}% of searches "
-             f"but only {mon_row['revenue_share']:.1f}% of revenue — monetization gap." if mon_row is not None else '')
-        )
-    }
-
-    # ── 2.4 Category A2C Share vs Search Share ───────────────────────────────────
-    a2c_scatter = cat_agg[['category','search_share','a2c_share','unique_terms']].fillna(0).copy()
-    a2c_scatter['over_index'] = a2c_scatter['a2c_share'] > a2c_scatter['search_share']
-    res['2.4'] = {
-        'points': a2c_scatter.to_dict(orient='records'),
-        'insight': ("Categories above the parity line are over-converting browsers to cart adds "
-                    "relative to their search share — strong product-page resonance. "
-                    "Categories below are under-converting and need product page or relevance improvements.")
-    }
 
     # ── 2.5 Long-Tail Depth by Category ─────────────────────────────────────────
     lt_cat = df_curr.groupby('category').apply(
@@ -399,12 +339,14 @@ def run_layer2(df_curr, df_prev):
     # Attach terms to each row for drill-down
     lt_rows = []
     for _, r in lt_cat.iterrows():
-        sub_lt = df_curr[(df_curr['category'] == r['category']) & (df_curr['is_long_tail'] == True)].sort_values('searches', ascending=False).head(30)
-        sub_hd = df_curr[(df_curr['category'] == r['category']) & (df_curr['is_long_tail'] == False)].sort_values('searches', ascending=False).head(30)
+        sub_lt = df_curr[(df_curr['category'] == r['category']) & (df_curr['is_long_tail'] == True)].sort_values('searches', ascending=False).head(30).copy()
+        sub_lt['visit_rate'] = (sub_lt['search_visits'] / sub_lt['searches'].replace(0, np.nan)).fillna(0)
+        sub_hd = df_curr[(df_curr['category'] == r['category']) & (df_curr['is_long_tail'] == False)].sort_values('searches', ascending=False).head(30).copy()
+        sub_hd['visit_rate'] = (sub_hd['search_visits'] / sub_hd['searches'].replace(0, np.nan)).fillna(0)
         lt_rows.append({
             **r.to_dict(),
-            'lt_terms': sub_lt[['term_norm','searches','a2c_count','orders']].to_dict(orient='records'),
-            'hd_terms': sub_hd[['term_norm','searches','a2c_count','orders']].to_dict(orient='records')
+            'lt_terms': sub_lt[['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records'),
+            'hd_terms': sub_hd[['term_norm','searches','a2c_count','orders','visit_rate']].to_dict(orient='records')
         })
     res['2.5'] = {
         'table': lt_rows,
@@ -412,19 +354,7 @@ def run_layer2(df_curr, df_prev):
                     f"(mature demand — users know exactly what they want)." if top_lt is not None else '')
     }
 
-    # ── 2.6 Searches per $1 Revenue (Efficiency) ────────────────────────────────
-    eff = cat_agg[cat_agg['revenue'] > 0].copy()
-    eff['searches_per_dollar'] = (eff['searches'] / eff['revenue']).round(2)
-    eff = eff.sort_values('searches_per_dollar')
-    best  = eff.iloc[0].to_dict()  if len(eff) > 0 else None
-    worst = eff.iloc[-1].to_dict() if len(eff) > 1 else None
-    eff_rows = [{**r.to_dict(), 'terms': _cat_terms(r['category'])} for _, r in eff.iterrows()]
-    res['2.6'] = {
-        'table': eff_rows,
-        'insight': (f"'{best['category']}' requires only {best['searches_per_dollar']:.1f} searches to generate $1 of revenue — most efficient. "
-                    f"'{worst['category']}' requires {worst['searches_per_dollar']:.1f} searches per $1 — "
-                    f"investigate catalog depth and pricing." if best is not None and worst is not None else '')
-    }
+
 
     # ── 2.7 Men's Jewelry Intent ─────────────────────────────────────────────────
     men_mask = df_curr['term_norm'].apply(
@@ -449,30 +379,7 @@ def run_layer2(df_curr, df_prev):
                     f"vs. site average of {site_conv:.2f}% — {abs(gap_men):.2f}pp {gap_dir} site average.")
     }
 
-    # ── 2.8 Gemstone Intent Analysis ─────────────────────────────────────────────
-    gem_rows = []
-    for gem in GEMSTONE_KEYWORDS:
-        sub = df_curr[df_curr['term_norm'].str.contains(gem, na=False)]
-        if not sub.empty:
-            s = float(sub['searches'].sum())
-            gem_rows.append({
-                'gemstone': gem,
-                'term_count': int(len(sub)),
-                'searches': s,
-                'a2c_count': float(sub['a2c_count'].sum()),
-                'orders': float(sub['orders'].sum()),
-                'a2c_rate': _safe_pct(sub['a2c_count'].sum(), s),
-                'terms': sub.sort_values('searches', ascending=False).head(10)[['term_norm','searches','a2c_count','orders']].to_dict(orient='records')
-            })
-    gem_rows.sort(key=lambda x: x['searches'], reverse=True)
-    top_gem   = gem_rows[0] if gem_rows else None
-    top_a2c   = max(gem_rows, key=lambda x: x['a2c_rate']) if gem_rows else None
-    res['2.8'] = {
-        'gems': gem_rows,
-        'insight': (f"'{top_gem['gemstone']}' has the most search demand ({int(top_gem['searches']):,} searches). "
-                    f"'{top_a2c['gemstone']}' has the strongest cart intent ({top_a2c['a2c_rate']:.2f}% A2C rate) "
-                    f"despite {'lower' if top_a2c != top_gem else 'equal'} overall volume." if top_gem else 'No gemstone terms detected.')
-    }
+
 
     # ── Period-comparison analyses ───────────────────────────────────────────────
     if df_prev is None or df_prev.empty:
@@ -538,49 +445,6 @@ def run_layer2(df_curr, df_prev):
         'chart': shift.to_dict(orient='records'),
         'insight': (f"{len(gainers)} categories gained >3pp of share; {len(losers)} lost >3pp. "
                     f"'{shift.iloc[0]['category']}' gained {shift.iloc[0]['delta']:.1f}pp — monitor seasonal vs. trend drivers." if len(shift) > 0 else '')
-    }
-
-    # ── 2.11 New Search Terms Per Category ───────────────────────────────────────
-    all_terms_curr = set(df_curr['term_norm'].dropna())
-    all_terms_prev = set(df_prev['term_norm'].dropna())
-    new_terms_set  = all_terms_curr - all_terms_prev
-    new_df = df_curr[df_curr['term_norm'].isin(new_terms_set)]
-    new_by_cat = new_df.groupby('category').agg(new_terms=('term_norm','count'), searches=('searches','sum')).reset_index()
-    new_by_cat = new_by_cat.sort_values('new_terms', ascending=False)
-    top_new = new_by_cat.iloc[0] if len(new_by_cat) > 0 else None
-
-    new_by_cat_with_terms = []
-    for _, r in new_by_cat.iterrows():
-        sub = new_df[new_df['category'] == r['category']].sort_values('searches', ascending=False).head(15)
-        new_by_cat_with_terms.append({**r.to_dict(), 'terms': sub[['term_norm','searches']].to_dict(orient='records')})
-
-    res['2.11'] = {
-        'by_category': new_by_cat_with_terms,
-        'total_new': int(len(new_terms_set)),
-        'insight': (f"'{top_new['category']}' added the most new search vocabulary — {int(top_new['new_terms'])} new terms. "
-                    f"This signals expanding consumer awareness or new product interest." if top_new is not None else '')
-    }
-
-    # ── 2.12 Long-Tail Expansion by Category ─────────────────────────────────────
-    def _lt_pct_by_cat(df):
-        g = df.groupby('category').apply(
-            lambda x: _safe_pct(x.loc[x['is_long_tail'] == True, 'searches'].sum(), x['searches'].sum())
-        ).reset_index(name='lt_pct')
-        return g
-
-    curr_lt = _lt_pct_by_cat(df_curr)
-    prev_lt = _lt_pct_by_cat(df_prev)
-    lt_exp  = pd.merge(curr_lt, prev_lt, on='category', suffixes=('_curr','_prev'), how='outer').fillna(0)
-    lt_exp['delta'] = (lt_exp['lt_pct_curr'] - lt_exp['lt_pct_prev']).round(2)
-    lt_exp = lt_exp.sort_values('delta', ascending=False)
-    top_lt_exp = lt_exp.iloc[0] if len(lt_exp) > 0 else None
-    lt_exp_chart = []
-    for _, r in lt_exp.iterrows():
-        lt_exp_chart.append({**r.to_dict(), 'terms': _cat_terms(r['category'])})
-    res['2.12'] = {
-        'chart': lt_exp_chart,
-        'insight': (f"'{top_lt_exp['category']}' shows the highest long-tail expansion at +{top_lt_exp['delta']:.1f}pp. "
-                    f"When long-tail% increases, demand is maturing — buyers are becoming more specific." if top_lt_exp is not None else '')
     }
 
     return res
@@ -686,46 +550,50 @@ def run_layer3(df_curr, df_prev):
                    f"Overall average visit rate: {avg_vr*100:.1f}%. Low visit rate means results are not relevant or compelling.")
     }
 
-    # ── 3.2 Visit Rate vs A2C Rate Scatter ────────────────────────────────────
-    scatter_df = df[(df['search_visits'] >= 20) | (df['searches'] >= 100)].copy()
-    res['3.2'] = {
-        'points': scatter_df[['term_norm','visit_rate','a2c_rate_v','a2c_rate_s','category','searches']].to_dict(orient='records'),
-        'insight': ("High visit rate + low A2C rate = product pages are not compelling. "
-                   "Low visit + high A2C among those who visit = good product, poor discoverability.")
-    }
 
-    # ── 3.3 A2C → Purchase Rate Per Term ─────────────────────────────────────
-    top_a2c = df[df['a2c_count'] > 0].sort_values('a2c_count', ascending=False).head(20)
-    top_a2c_t = top_a2c.iloc[0].to_dict() if len(top_a2c) > 0 else None
-    res['3.3'] = {
-        'terms': top_a2c[['term_norm','a2c_count','orders','purchase_rate','searches','category']].to_dict(orient='records'),
-        'insight': (f"'{top_a2c_t['term_norm']}' has the highest A2C ({int(top_a2c_t['a2c_count'])}) "
-                   f"but {top_a2c_t['purchase_rate']*100:.1f}% purchase rate — strong cart intent with high abandonment. "
-                   f"Likely cause: price, trust, or complexity of buying decision." if top_a2c_t else '')
-    }
-
-    # ── 3.4 E2E Conversion Ranking (>=500 searches) ───────────────────────────
-    high_vol = df[df['searches'] >= 500]
-    top_conv = high_vol.sort_values('e2e_conv', ascending=False).head(20)
-    bot_conv = high_vol.sort_values('e2e_conv').head(20)
-    top_list = top_conv['term_norm'].head(5).tolist()
-    res['3.4'] = {
-        'top20':   top_conv[['term_norm','searches','visit_rate','a2c_rate_s','e2e_conv','category','usd_revenue']].to_dict(orient='records'),
-        'bottom20': bot_conv[['term_norm','searches','visit_rate','a2c_rate_s','e2e_conv','category','usd_revenue']].to_dict(orient='records'),
-        'insight': (f"Top converters: {', '.join(top_list)}. These have the cleanest demand-to-purchase pathway. "
-                   f"Replicate their catalog and PDP patterns across underperforming terms.")
-    }
 
     # ── 3.5 Category Funnel Benchmarks ────────────────────────────────────────
-    cat_f = df.groupby('category').agg(
+    df_c = df_curr.copy()
+    df_c['visit_rate'] = (df_c['search_visits'] / df_c['searches'].replace(0, np.nan)).fillna(0)
+    df_c['a2c_rate_s'] = (df_c['a2c_count'] / df_c['searches'].replace(0, np.nan)).fillna(0)
+    df_c['purchase_rate'] = (df_c['orders'] / df_c['a2c_count'].replace(0, np.nan)).fillna(0)
+    df_c['e2e_conv']   = (df_c['orders'] / df_c['searches'].replace(0, np.nan)).fillna(0)
+    
+    cat_curr = df_c.groupby('category').agg(
         avg_visit_rate=('visit_rate','mean'),
         avg_a2c_rate=('a2c_rate_s','mean'),
         avg_purchase_rate=('purchase_rate','mean'),
         avg_e2e_conv=('e2e_conv','mean'),
         searches=('searches','sum')
     ).reset_index().fillna(0)
+    
+    if df_prev is not None and not df_prev.empty:
+        df_p = df_prev.copy()
+        df_p['visit_rate'] = (df_p['search_visits'] / df_p['searches'].replace(0, np.nan)).fillna(0)
+        df_p['a2c_rate_s'] = (df_p['a2c_count'] / df_p['searches'].replace(0, np.nan)).fillna(0)
+        df_p['purchase_rate'] = (df_p['orders'] / df_p['a2c_count'].replace(0, np.nan)).fillna(0)
+        df_p['e2e_conv']   = (df_p['orders'] / df_p['searches'].replace(0, np.nan)).fillna(0)
+        
+        cat_prev = df_p.groupby('category').agg(
+            avg_visit_rate_prev=('visit_rate','mean'),
+            avg_a2c_rate_prev=('a2c_rate_s','mean'),
+            avg_purchase_rate_prev=('purchase_rate','mean'),
+            avg_e2e_conv_prev=('e2e_conv','mean')
+        ).reset_index().fillna(0)
+        
+        cat_f = pd.merge(cat_curr, cat_prev, on='category', how='left').fillna(0)
+        cat_f['delta_visit_rate'] = cat_f['avg_visit_rate'] - cat_f['avg_visit_rate_prev']
+        cat_f['delta_a2c_rate']   = cat_f['avg_a2c_rate'] - cat_f['avg_a2c_rate_prev']
+        cat_f['delta_e2e_conv']   = cat_f['avg_e2e_conv'] - cat_f['avg_e2e_conv_prev']
+    else:
+        cat_f = cat_curr.copy()
+        cat_f['delta_visit_rate'] = 0.0
+        cat_f['delta_a2c_rate']   = 0.0
+        cat_f['delta_e2e_conv']   = 0.0
+        
     best_cat  = cat_f.sort_values('avg_e2e_conv', ascending=False).iloc[0].to_dict() if len(cat_f) > 0 else None
     worst_cat = cat_f.sort_values('avg_e2e_conv').iloc[0].to_dict() if len(cat_f) > 0 else None
+    
     cat_f_chart = []
     for _, r in cat_f.sort_values('searches', ascending=False).iterrows():
         sub = df[df['category'] == r['category']].sort_values('searches', ascending=False).head(100)
@@ -733,6 +601,7 @@ def run_layer3(df_curr, df_prev):
             **r.to_dict(), 
             'terms': sub[['term_norm','searches','visit_rate','a2c_rate_v','purchase_rate','e2e_conv','category','a2c_count','orders']].to_dict(orient='records')
         })
+        
     res['3.5'] = {
         'categories': cat_f_chart,
         'insight': (f"'{best_cat['category']}' has the highest full-funnel efficiency "
@@ -741,23 +610,7 @@ def run_layer3(df_curr, df_prev):
                    if best_cat and worst_cat else '')
     }
 
-    # ── 3.6 Zero-Order, High A2C ──────────────────────────────────────────────
-    z6 = df[(df['orders'] == 0) & (df['a2c_count'] >= 100)].sort_values('a2c_count', ascending=False)
-    res['3.6'] = {
-        'terms': z6[['term_norm','searches','search_visits','a2c_count','orders','category']].head(30).to_dict(orient='records'),
-        'count': int(len(z6)),
-        'insight': ("Users are carting these terms but never completing purchase. "
-                   "Root causes: price too high, no Buy Now path, COD not available, or trust gap on product page.")
-    }
 
-    # ── 3.7 Zero-A2C, High Visits ─────────────────────────────────────────────
-    z7 = df[(df['a2c_count'] == 0) & (df['search_visits'] >= 200)].sort_values('search_visits', ascending=False)
-    res['3.7'] = {
-        'terms': z7[['term_norm','searches','search_visits','a2c_count','category']].head(30).to_dict(orient='records'),
-        'count': int(len(z7)),
-        'insight': ("Users are seeing search results but nothing is carted. "
-                   "Root causes: wrong products surfaced, zero inventory, or irrelevant results.")
-    }
 
     # ── 3.8 Zero-Conv High-Traffic ────────────────────────────────────────────
     z8 = df[(df['orders'] == 0) & (df['searches'] >= 1000)].sort_values('searches', ascending=False).head(15)
@@ -799,14 +652,7 @@ def run_layer3(df_curr, df_prev):
                    f"(Thresholds: Stage 1 = <25% Visit Rate; Stage 2 = <5% A2C/Visit; Stage 3 = <1% Purch/A2C).")
     }
 
-    # ── 3.10 A2C-to-Purchase Gap ──────────────────────────────────────────────
-    t10 = df.sort_values('a2c_abandon', ascending=False).head(15)
-    t10_top = t10.iloc[0].to_dict() if len(t10) > 0 else None
-    res['3.10'] = {
-        'terms': t10[['term_norm','a2c_count','orders','a2c_abandon','searches','category']].to_dict(orient='records'),
-        'insight': (f"'{t10_top['term_norm']}' has the largest cart abandonment gap at {int(t10_top['a2c_abandon'])} carts. "
-                   f"This is the highest-value retargeting and checkout-optimization opportunity." if t10_top else '')
-    }
+
 
     if df_prev is None or df_prev.empty:
         return res
@@ -853,24 +699,7 @@ def run_layer3(df_curr, df_prev):
         'insight': "Declining checkout rate = cart abandonment worsening. Causes: price increase, checkout friction, competitor availability."
     }
 
-    # ── 3.14 Funnel Stage Regression ─────────────────────────────────────────
-    reg = []
-    for _, r in merged.iterrows():
-        issues = []
-        if r['prev_vr'] > 0 and r['visit_rate'] < r['prev_vr'] * 0.9:
-            issues.append(f"Visit rate ↓{((r['prev_vr']-r['visit_rate'])/r['prev_vr']*100):.1f}%")
-        if r['prev_a2c_v'] > 0 and r['a2c_rate_v'] < r['prev_a2c_v'] * 0.9:
-            issues.append(f"A2C rate ↓{((r['prev_a2c_v']-r['a2c_rate_v'])/r['prev_a2c_v']*100):.1f}%")
-        if r['prev_pr'] > 0 and r['purchase_rate'] < r['prev_pr'] * 0.9:
-            issues.append(f"Purchase rate ↓{((r['prev_pr']-r['purchase_rate'])/r['prev_pr']*100):.1f}%")
-        if issues:
-            reg.append({'term_norm': r['term_norm'], 'searches': r['searches'], 'category': r['category'],
-                        'regressions': '; '.join(issues), 'stages_affected': len(issues)})
-    reg.sort(key=lambda x: x['searches'], reverse=True)
-    res['3.14'] = {
-        'terms': reg[:30], 'count': len(reg),
-        'insight': f"These {len(reg)} terms experienced funnel regression this period. Act immediately on high-volume terms in this list."
-    }
+
 
     # ── 3.15 Stopped Converting ───────────────────────────────────────────────
     prev_orders = df_prev[df_prev['orders'] > 0][['term_norm','orders','searches']].rename(

@@ -1,9 +1,11 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import io
 import pandas as pd
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from dotenv import load_dotenv
 
 # Load SerpApi key from .env.local
 load_dotenv(os.path.join(os.getcwd(), '.env.local'))
@@ -326,5 +328,380 @@ def trends():
     """Deprecated legacy endpoint, redirected to new SerpApi logic if needed."""
     return api_trends()
 
+import db as supabase_db
+import math
+
+# ── Admin page route ──────────────────────────────────────────────────
+@app.route('/admin')
+def admin_page():
+    return app.send_static_file('admin.html')
+
+# ── Admin: upload a week ──────────────────────────────────────────────
+@app.route('/admin/upload-week', methods=['POST'])
+def admin_upload_week():
+    # Password check
+    if request.form.get('password') != os.environ.get('ADMIN_PASSWORD'):
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+
+    label            = request.form.get('label', '').strip()
+    week_start_date  = request.form.get('week_start_date') or None
+    if not label:
+        return jsonify({'status': 'error', 'message': 'Week label required'}), 400
+
+    files = request.files
+    try:
+        search_curr = safe_read_csv(
+            files['search_terms'], 'search_terms.csv'
+        ) if 'search_terms' in files else None
+        a2c_curr = safe_read_csv(
+            files['a2c'], 'a2c.csv'
+        ) if 'a2c' in files else None
+
+        df = process_period_files(search_curr, a2c_curr)
+        if df is None or df.empty:
+            return jsonify({'status': 'error',
+                            'message': 'No data processed from files'}), 400
+
+        # Compute rates (same logic as run_layer3)
+        import numpy as np
+        df['visit_rate']    = (df['search_visits'] /
+                               df['searches'].replace(0, np.nan)).fillna(0).round(4)
+        df['a2c_rate_s']    = (df['a2c_count'] /
+                               df['searches'].replace(0, np.nan)).fillna(0).round(4)
+        df['purchase_rate'] = (df['orders'] /
+                               df['a2c_count'].replace(0, np.nan)).fillna(0).round(4)
+        df['e2e_conv']      = (df['orders'] /
+                               df['searches'].replace(0, np.nan)).fillna(0).round(6)
+
+        client = supabase_db.get_client()
+
+        # Insert week record first → get the week_id
+        week_row = client.table('weeks').insert({
+            'label':           label,
+            'week_start_date': week_start_date,
+            'total_terms':     int(len(df)),
+            'total_searches':  int(df['searches'].sum()),
+            'total_orders':    int(df['orders'].sum()),
+        }).execute()
+
+        week_id = week_row.data[0]['id']
+
+        # Build records for bulk insert
+        records = []
+        for _, row in df.iterrows():
+            records.append({
+                'week_id':      week_id,
+                'term_norm':    str(row['term_norm']),
+                'category':     str(row.get('category', '')),
+                'searches':     int(row.get('searches', 0)),
+                'search_visits':int(row.get('search_visits', 0)),
+                'a2c_count':    int(row.get('a2c_count', 0)),
+                'orders':       int(row.get('orders', 0)),
+                'usd_revenue':  float(row.get('usd_revenue', 0)),
+                'visit_rate':   float(row.get('visit_rate', 0)),
+                'a2c_rate_s':   float(row.get('a2c_rate_s', 0)),
+                'purchase_rate':float(row.get('purchase_rate', 0)),
+                'e2e_conv':     float(row.get('e2e_conv', 0)),
+                'is_long_tail': bool(row.get('is_long_tail', False)),
+            })
+
+        # Bulk insert in chunks of 500 (Supabase payload limit)
+        CHUNK = 500
+        for i in range(0, len(records), CHUNK):
+            client.table('search_terms_weekly').insert(
+                records[i:i + CHUNK]
+            ).execute()
+
+        return jsonify({
+            'status':   'success',
+            'week_id':  week_id,
+            'label':    label,
+            'terms_uploaded': len(records),
+        })
+
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+# ── Parallel helper for paginated fetching ────────────────────────────
+def fetch_weekly_data_parallel(client, week_ids, select_cols):
+    from concurrent.futures import ThreadPoolExecutor
+    if not week_ids:
+        return []
+    # Get total_terms for each week from metadata to paginate accurately
+    weeks_meta = client.table('weeks') \
+                       .select('id, total_terms') \
+                       .in_('id', week_ids) \
+                       .execute().data
+    week_limits = {w['id']: w['total_terms'] for w in weeks_meta}
+
+    def fetch_page(week_id, start):
+        return client.table('search_terms_weekly') \
+                     .select(select_cols) \
+                     .eq('week_id', week_id) \
+                     .range(start, start + 999) \
+                     .execute().data
+
+    futures = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for week_id in week_ids:
+            total = week_limits.get(week_id, 25000)
+            for start in range(0, total, 1000):
+                futures.append(executor.submit(fetch_page, week_id, start))
+
+    records = []
+    for f in futures:
+        records.extend(f.result())
+    return records
+
+
+# ── Get all uploaded weeks ────────────────────────────────────────────
+@app.route('/weeks', methods=['GET'])
+def get_weeks():
+    try:
+        client = supabase_db.get_client()
+        result = client.table('weeks') \
+                       .select('*') \
+                       .order('week_start_date', desc=False) \
+                       .execute()
+        return jsonify({'status': 'success', 'weeks': result.data})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+@app.route('/trends-weekly', methods=['POST'])
+def trends_weekly():
+    body     = request.json or {}
+    week_ids = body.get('week_ids', [])    # list of int week IDs
+    top_n    = int(body.get('top_n', 50))  # 10, 25, or 50
+    terms    = body.get('terms', None)     # list of specific term_norms (optional)
+
+    if not week_ids:
+        return jsonify({'status': 'error',
+                        'message': 'week_ids required'}), 400
+    try:
+        client = supabase_db.get_client()
+
+        if terms:
+            # Query only specific terms directly, bypassing parallel full table fetch
+            records = client.table('search_terms_weekly') \
+                            .select('week_id,term_norm,category,searches,visit_rate,a2c_rate_s,purchase_rate,e2e_conv') \
+                            .in_('week_id', week_ids) \
+                            .in_('term_norm', terms) \
+                            .execute().data
+            top_terms = terms
+        else:
+            # Fetch all term data in parallel using the paginated helper
+            records = fetch_weekly_data_parallel(
+                client, week_ids,
+                'week_id,term_norm,category,searches,visit_rate,a2c_rate_s,purchase_rate,e2e_conv'
+            )
+
+        import pandas as pd
+        import numpy as np
+
+        df = pd.DataFrame(records)
+        
+        if not terms:
+            if df.empty:
+                return jsonify({'status': 'success', 'terms': [],
+                                'weeks': []})
+
+            # Determine top N terms by total searches across all
+            # selected weeks — this is the stable ranking
+            top_terms = (
+                df.groupby('term_norm')['searches']
+                .sum()
+                .sort_values(ascending=False)
+                .head(top_n)
+                .index
+                .tolist()
+            )
+
+            # Filter to only top N terms
+            df = df[df['term_norm'].isin(top_terms)]
+
+        # Pivot: one row per term, one column group per week
+        # Shape the response as a list of term objects, each with
+        # a 'weeks' list ordered by week_start_date
+        weeks_meta = client.table('weeks') \
+                           .select('id, label, week_start_date') \
+                           .in_('id', week_ids) \
+                           .order('week_start_date', desc=False) \
+                           .execute().data
+
+        week_order = [w['id'] for w in weeks_meta]
+
+        terms_out = []
+        for term in top_terms:
+            sub = df[df['term_norm'] == term] if not df.empty else pd.DataFrame()
+            weekly = []
+            for wid in week_order:
+                row = sub[sub['week_id'] == wid] if not sub.empty else pd.DataFrame()
+                if row.empty:
+                    weekly.append(None)  # term not present this week
+                else:
+                    r = row.iloc[0]
+                    weekly.append({
+                        'week_id':      wid,
+                        'searches':     int(r['searches']),
+                        'visit_rate':   round(float(r['visit_rate']), 4),
+                        'a2c_rate_s':   round(float(r['a2c_rate_s']), 4),
+                        'purchase_rate':round(float(r['purchase_rate']), 4),
+                        'e2e_conv':     round(float(r['e2e_conv']), 6),
+                        'category':     str(r['category']),
+                    })
+            
+            cat = str(sub.iloc[0]['category']) if (not sub.empty and 'category' in sub.columns) else ""
+            terms_out.append({
+                'term_norm': term,
+                'category':  cat,
+                'weeks':     weekly,
+            })
+
+        return jsonify({
+            'status':      'success',
+            'weeks_meta':  weeks_meta,
+            'terms':       terms_out,
+            'top_n':       top_n if not terms else len(terms),
+        })
+
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+# ── Admin: delete a week ──────────────────────────────────────────────
+@app.route('/admin/delete-week/<int:week_id>', methods=['DELETE'])
+def admin_delete_week(week_id):
+    if request.json.get('password') != os.environ.get('ADMIN_PASSWORD'):
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    try:
+        client = supabase_db.get_client()
+        # ON DELETE CASCADE handles search_terms_weekly cleanup
+        client.table('weeks').delete().eq('id', week_id).execute()
+        return jsonify({'status': 'success', 'deleted_week_id': week_id})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+# ── GET /terms-list ──────────────────────────────────────────────────
+@app.route('/terms-list', methods=['GET'])
+def terms_list():
+    try:
+        client = supabase_db.get_client()
+        weeks_res = client.table('weeks').select('id, total_terms').execute().data
+        if not weeks_res:
+            return jsonify({'status': 'success', 'terms': []})
+
+        from concurrent.futures import ThreadPoolExecutor
+        def fetch_page(week_id, start):
+            return client.table('search_terms_weekly') \
+                         .select('term_norm') \
+                         .eq('week_id', week_id) \
+                         .range(start, start + 999) \
+                         .execute().data
+
+        futures = []
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            for w in weeks_res:
+                week_id = w['id']
+                total = w.get('total_terms', 25000)
+                for start in range(0, total, 1000):
+                    futures.append(executor.submit(fetch_page, week_id, start))
+
+        terms = set()
+        for f in futures:
+            for r in f.result():
+                tn = r.get('term_norm')
+                if tn:
+                    terms.add(tn)
+
+        return jsonify({'status': 'success', 'terms': sorted(list(terms))})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+# ── POST /trends-material ─────────────────────────────────────────────
+METALS    = {
+    'Gold': 'gold', 'Diamond': 'diamond', 'Silver': 'silver',
+    'Platinum': 'platinum', 'Rose Gold': 'rose gold',
+    'White Gold': 'white gold',
+}
+GEMSTONES = {
+    'Ruby': 'ruby', 'Emerald': 'emerald', 'Sapphire': 'sapphire',
+    'Pearl': 'pearl', 'Polki': 'polki', 'Kundan': 'kundan',
+    'Tanzanite': 'tanzanite', 'Coral': 'coral', 'Opal': 'opal',
+}
+
+@app.route('/trends-material', methods=['POST'])
+def trends_material():
+    body     = request.json or {}
+    week_ids = body.get('week_ids', [])
+    if not week_ids:
+        return jsonify({'status':'error',
+                        'message':'week_ids required'}), 400
+    try:
+        import pandas as pd
+        client = supabase_db.get_client()
+
+        # Fetch ALL term data for these weeks in parallel (no top-N limit)
+        records = fetch_weekly_data_parallel(
+            client, week_ids,
+            'week_id,term_norm,category,searches'
+        )
+        df = pd.DataFrame(records)
+        if df.empty:
+            return jsonify({
+                'status':     'success',
+                'weeks_meta': [],
+                'metals':     {n: [] for n in METALS},
+                'gemstones':  {n: [] for n in GEMSTONES},
+                'categories': {},
+            })
+
+        weeks_meta = client.table('weeks') \
+                           .select('id,label,week_start_date') \
+                           .in_('id', week_ids) \
+                           .order('week_start_date', desc=False) \
+                           .execute().data
+        week_order = [w['id'] for w in weeks_meta]
+
+        def agg_keyword(keyword):
+            mask = df['term_norm'].str.contains(
+                keyword, case=False, na=False
+            )
+            per_week = df[mask].groupby('week_id')['searches'] \
+                               .sum().to_dict()
+            return [
+                {'week_id': wid,
+                 'searches': int(per_week.get(wid, 0))}
+                for wid in week_order
+            ]
+
+        metals_out    = {n: agg_keyword(kw)
+                         for n, kw in METALS.items()}
+        gemstones_out = {n: agg_keyword(kw)
+                         for n, kw in GEMSTONES.items()}
+
+        # Categories: aggregate from the category column directly
+        cats_out = {}
+        for cat, grp in df.groupby('category'):
+            per_week = grp.groupby('week_id')['searches'] \
+                          .sum().to_dict()
+            cats_out[str(cat)] = [
+                {'week_id': wid,
+                 'searches': int(per_week.get(wid, 0))}
+                for wid in week_order
+            ]
+
+        return jsonify({
+            'status':     'success',
+            'weeks_meta': weeks_meta,
+            'metals':     metals_out,
+            'gemstones':  gemstones_out,
+            'categories': cats_out,
+        })
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 400
+
 if __name__ == '__main__':
     app.run(port=5001, debug=True)
+

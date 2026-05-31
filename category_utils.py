@@ -11,12 +11,14 @@ def get_category(term):
     if any(k in term for k in ['coin', 'biscuit', 'bar', 'bullion']): return 'Coins & Bullion'
     if any(k in term for k in ['nose pin', 'nose ring', 'nosepin', 'nath']): return 'Nose Jewelry'
     
+    # Earrings check (including spaced variants to prevent them matching the Rings regex check)
+    if any(k in term for k in ['earring', 'earrings', 'earing', 'earings', 'ear ring', 'ear rings', 'jhumka', 'jhumkas', 'studs', 'tops', 'bali', 'hoop']): return 'Earrings'
+
     # Use regex for rings to avoid matching "earring"
     if re.search(r'\b(ring|rings)\b', term) or any(k in term for k in ['solitaire', 'band ring']): return 'Rings'
     
     if any(k in term for k in ['chain', 'chains']): return 'Chains'
     if any(k in term for k in ['necklace', 'necklaces', 'haar', 'haram', 'rani haar', 'choker']): return 'Necklaces'
-    if any(k in term for k in ['earring', 'earrings', 'earing', 'earings', 'jhumka', 'jhumkas', 'studs', 'tops', 'bali', 'hoop']): return 'Earrings'
     if any(k in term for k in ['mangalsutra', 'mangal']): return 'Mangalsutra'
     if any(k in term for k in ['bracelet', 'bracelets', 'bangle', 'bangles', 'kada', 'kangan']): return 'Bracelets & Bangles'
     if any(k in term for k in ['pendant', 'locket', 'pendent']): return 'Pendants'
