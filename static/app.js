@@ -2055,7 +2055,6 @@ function WeekDetailPanel({ term, weeksMeta, orderedWids, baselineWeekId }) {
               <th className="pb-1 text-right pr-4">Searches</th>
               <th className="pb-1 text-right pr-4">WoW</th>
               <th className="pb-1 text-right pr-4">Visit %</th>
-              <th className="pb-1 text-right pr-4">A2C %</th>
               <th className="pb-1 text-right">Purchase %</th>
             </tr>
           </thead>
@@ -2080,9 +2079,6 @@ function WeekDetailPanel({ term, weeksMeta, orderedWids, baselineWeekId }) {
                   </td>
                   <td className="py-1.5 pr-4 text-right text-gray-600 tabular-nums">
                     {w ? (w.visit_rate * 100).toFixed(1) + '%' : '—'}
-                  </td>
-                  <td className="py-1.5 pr-4 text-right text-gray-600 tabular-nums">
-                    {w ? (w.a2c_rate_s * 100).toFixed(1) + '%' : '—'}
                   </td>
                   <td className="py-1.5 text-right text-gray-600 tabular-nums">
                     {w ? (w.purchase_rate * 100).toFixed(1) + '%' : '—'}
