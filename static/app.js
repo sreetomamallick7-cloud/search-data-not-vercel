@@ -191,6 +191,59 @@ function Card({ title, badge, children, insight, insightType }) {
   );
 }
 
+// ─── Word Cloud ───────────────────────────────────────────────────────────────
+function WordCloud({ terms, onWordClick }) {
+  if (!terms || terms.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 px-4 bg-gray-50 rounded-xl border border-dashed border-gray-300">
+        <svg className="w-8 h-8 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+        <span className="text-xs text-gray-400 font-medium">No intent keywords found</span>
+      </div>
+    );
+  }
+
+  const searches = terms.map(t => t.searches);
+  const maxS = Math.max(...searches, 1);
+  const minS = Math.min(...searches, 0);
+
+  // Curated premium HSL-derived colors for text
+  const colors = [
+    'text-indigo-400', 'text-emerald-400', 'text-amber-400',
+    'text-rose-400', 'text-cyan-400', 'text-purple-400',
+    'text-fuchsia-400', 'text-orange-400', 'text-pink-400',
+    'text-sky-400', 'text-teal-400'
+  ];
+
+  return (
+    <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-3 py-8 px-6 bg-slate-900 rounded-xl shadow-inner min-h-[200px] select-none border border-slate-800 transition-all duration-300 hover:shadow-md">
+      {terms.map((t, idx) => {
+        // Calculate size using square root scale to balance high volume items
+        let size = 1.0; // default rem
+        if (maxS > minS) {
+          const ratio = (Math.sqrt(t.searches) - Math.sqrt(minS)) / (Math.sqrt(maxS) - Math.sqrt(minS));
+          size = 0.85 + ratio * 1.35; // from 0.85rem to 2.2rem
+        }
+        const fontSize = `${size}rem`;
+        const colorClass = colors[idx % colors.length];
+
+        return (
+          <span
+            key={t.term_norm}
+            onClick={() => onWordClick && onWordClick(t)}
+            className={`cursor-pointer transition-transform hover:scale-110 font-medium ${colorClass}`}
+            style={{ fontSize }}
+            title={`${t.searches} searches`}
+          >
+            {t.term_norm}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
 function KPICard({ title, value, growth, sub }) {
   const up = growth >= 0;
@@ -1181,6 +1234,28 @@ function Layer1({ layer1 }) {
                 </div>
               )}
 
+              {/* ── Word Cloud for Actionable High-Volume Keywords ── */}
+              <Card
+                title="1.5 · Actionable High-Volume Gaps (Word Cloud)"
+                badge="Catalog & Relevance Gaps"
+              >
+                <WordCloud
+                  terms={filteredZeroCarts}
+                  onWordClick={(t) => setDrill({
+                    title: `${t.term_norm} — zero cart actionable context`,
+                    terms: [
+                      {
+                        term_norm: t.term_norm,
+                        searches: t.searches,
+                        visit_rate: t.visit_rate,
+                        a2c_count: 0,
+                        orders: 0
+                      }
+                    ]
+                  })}
+                />
+              </Card>
+
               {/* ── PART B — ACTION CARD (zero-cart terms) ── */}
               <Card
                 title="1.5 · High intent, zero cart — catalog & relevance gaps"
@@ -1870,6 +1945,10 @@ function UploadScreen({ onResult }) {
 
   const curr = [{key:'search_terms_current',label:'Search Terms (Current)'},{key:'a2c_current',label:'Add-to-Cart Events (Current)'}];
   const prev = [{key:'search_terms_previous',label:'Search Terms (Previous)'},{key:'a2c_previous',label:'Add-to-Cart Events (Previous)'}];
+  const platform = [
+    { key:'platform_terms_current', label:'App vs Web Split (Current)' },
+    { key:'platform_terms_previous', label:'App vs Web Split (Previous)' },
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-8">
@@ -1886,6 +1965,19 @@ function UploadScreen({ onResult }) {
         <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-white/10">
           <h2 className="text-xs font-semibold text-indigo-300 uppercase tracking-widest mb-1">Previous Period <span className="text-slate-500 normal-case font-normal ml-2">Optional — enables MoM trend analyses</span></h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">{prev.map(c=><FileInput key={c.key} fileKey={c.key} label={c.label} files={files} onChange={setFile}/>)}</div>
+        </div>
+        <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 mb-6 border border-white/10">
+          <h2 className="text-xs font-semibold text-indigo-300 uppercase tracking-widest mb-1">
+            Platform Split
+            <span className="text-slate-500 normal-case font-normal ml-2">
+              Optional — enables App vs Web analysis. File must contain web, Android, iOS columns.
+            </span>
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            {platform.map(c =>
+              <FileInput key={c.key} fileKey={c.key} label={c.label} files={files} onChange={setFile} />
+            )}
+          </div>
         </div>
         {error && <div className="bg-red-500/20 border border-red-400/50 text-red-300 rounded-xl px-5 py-3 mb-5 text-sm">{error}</div>}
         <div className="flex justify-end">
@@ -3755,6 +3847,870 @@ function TrendsModule() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// INSIGHTS & SEASONALITY SUMMARY BUILDERS, COMPONENTS AND HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildTermRow(t, thr) {
+  const avgVisit = (thr?.visit_rate || 0) * 100;
+  const avgA2c   = (thr?.a2c_rate   || 0) * 100;
+  const avgPurch = (thr?.purchase_rate || 0) * 100;
+  return {
+    term:              t.term_norm || t.term || '',
+    searches:          t.searches || 0,
+    mom_pct:           t.searches_growth != null
+                         ? parseFloat(t.searches_growth.toFixed(1))
+                         : null,
+    visit_rate_pct:    parseFloat(((t.visit_rate || 0) * 100).toFixed(1)),
+    a2c_rate_pct:      parseFloat(((t.a2c_rate_s || 0) * 100).toFixed(1)),
+    purchase_rate_pct: parseFloat(((t.purchase_rate || 0) * 100).toFixed(1)),
+    avg_visit_rate:    parseFloat(avgVisit.toFixed(1)),
+    avg_a2c_rate:      parseFloat(avgA2c.toFixed(1)),
+    avg_purch_rate:    parseFloat(avgPurch.toFixed(1)),
+  };
+}
+
+function buildWeeklyBriefSummary(result) {
+  const kpis    = result?.kpis   || {};
+  const d11     = result?.layer1?.['1.1'] || {};
+  const terms   = d11?.terms || [];
+  const thr     = d11?.thresholds || {};
+  const d15     = result?.layer1?.['1.5'] || {};
+  const d38     = result?.layer3?.['3.8'] || {};
+  const d16     = result?.layer1?.['1.6'] || {};
+  const topOcc   = (d16?.occasion_clusters || [])
+                   .sort((a,b)=>(b.searches||0)-(a.searches||0))[0];
+
+  return {
+    total_searches:       kpis.total_searches || 0,
+    total_orders:         kpis.total_orders   || 0,
+    e2e_conv:             kpis.e2e_conv
+                            ? (kpis.e2e_conv*100).toFixed(3) : '0',
+    zero_conv_count:      (d38.terms || []).length,
+    zero_cart_count:      d15.zero_cart_count || 0,
+    top_occasion:         topOcc?.cluster || 'n/a',
+    top_occasion_searches:topOcc?.searches || 0,
+    top_occasion_conv:    topOcc?.conv_rate
+                            ? (topOcc.conv_rate).toFixed(2) : '0',
+    top_10_terms:         terms.slice(0,10).map(t => buildTermRow(t, thr)),
+    site_avg: {
+      visit_rate_pct: (thr.visit_rate || 0) * 100,
+      a2c_rate_pct:   (thr.a2c_rate || 0) * 100,
+      purchase_rate_pct: (thr.purchase_rate || 0) * 100,
+    }
+  };
+}
+
+function buildDemandSummary(result) {
+  const d11       = result?.layer1?.['1.1'] || {};
+  const terms     = d11?.terms || [];
+  const thr       = d11?.thresholds || {};
+  const d15       = result?.layer1?.['1.5'] || {};
+  const d16       = result?.layer1?.['1.6'] || {};
+
+  const withMom   = terms.filter(t => t.searches_growth != null);
+  const growers   = [...withMom].sort((a,b) => b.searches_growth - a.searches_growth);
+  const decliners = [...withMom].sort((a,b) => a.searches_growth - b.searches_growth);
+
+  const halfVisit = thr.visit_rate ? thr.visit_rate * 0.5 : 0;
+  const brokenGrowing = growers.filter(
+    t => t.searches_growth > 20 && (t.visit_rate || 0) < halfVisit
+  );
+
+  const topOcc = (d16?.occasion_clusters || [])
+                   .sort((a,b)=>(b.searches||0)-(a.searches||0))[0];
+
+  return {
+    top_10_terms: terms.slice(0,10).map(t => buildTermRow(t, thr)),
+    site_avg: {
+      visit_rate_pct: (thr.visit_rate || 0) * 100,
+      a2c_rate_pct:   (thr.a2c_rate || 0) * 100,
+      purchase_rate_pct: (thr.purchase_rate || 0) * 100,
+    },
+    top_growers:   growers.slice(0,5).map(t => buildTermRow(t, thr)),
+    top_decliners: decliners.slice(0,5).map(t => buildTermRow(t, thr)),
+    broken_funnel_summary: brokenGrowing.slice(0, 5).map(t =>
+      `${t.term_norm || t.term} (growth: ${t.searches_growth?.toFixed(1)}%, visit rate: ${((t.visit_rate || 0) * 100).toFixed(1)}%)`
+    ).join('; ') || 'none',
+    long_tail_pct: d15.pct_of_searches ? d15.pct_of_searches.toFixed(1) : '0',
+    top_occasion:  topOcc?.cluster || 'n/a',
+    top_occasion_searches: topOcc?.searches || 0,
+  };
+}
+
+function buildCatalogGapsSummary(result) {
+  const d15    = result?.layer1?.['1.5'] || {};
+  const d38    = result?.layer3?.['3.8'] || {};
+  const terms38 = d38.terms || [];
+  const zeroCt = [...terms38].sort((a,b) => (b.searches||0) - (a.searches||0));
+  const d11    = result?.layer1?.['1.1'] || {};
+  const thr    = d11?.thresholds || {};
+
+  return {
+    avg_visit_rate:  ((thr.visit_rate || 0) * 100).toFixed(1),
+    zero_cart_count: d15?.zero_cart_count || 0,
+    zero_cart_terms: (d15?.zero_cart_terms || []).slice(0,10).map(t => ({
+      term:           t.term_norm || t.term || '',
+      searches:       t.searches || 0,
+      visit_rate_pct: ((t.visit_rate || 0) * 100).toFixed(1)
+    })),
+    zero_conv_count: terms38.length,
+    zero_conv_terms: zeroCt.slice(0,10).map(t => ({
+      term:           t.term_norm || t.term || '',
+      searches:       t.searches || 0,
+      visit_rate_pct: t.search_visits && t.searches ? ((t.search_visits / t.searches) * 100).toFixed(1) : '0'
+    })),
+  };
+}
+
+function buildFunnelSummary(result) {
+  const kpis    = result?.kpis || {};
+  const d39    = result?.layer3?.['3.9'] || {};
+  const d38    = result?.layer3?.['3.8'] || {};
+  const d35    = result?.layer3?.['3.5'] || {};
+
+  const stages = {};
+  (d39.stage_counts || []).forEach(s => {
+    if (s.stage.includes('Stage 1')) stages.stage1 = s.count;
+    if (s.stage.includes('Stage 2')) stages.stage2 = s.count;
+    if (s.stage.includes('Stage 3')) stages.stage3 = s.count;
+    if (s.stage.includes('Healthy')) stages.healthy = s.count;
+  });
+
+  const a2cNoOrders = (result?.layer1?.['1.1']?.terms || []).filter(
+    t => (t.a2c_count || 0) > 0 && (t.orders || 0) === 0
+  );
+
+  return {
+    overall_visit_rate:    ((kpis.visit_rate || 0) * 100).toFixed(1),
+    overall_a2c_rate:      ((kpis.a2c_rate || 0) * 100).toFixed(1),
+    overall_purchase_rate: kpis.a2c_count ? ((kpis.orders / kpis.a2c_count) * 100).toFixed(1) : '0',
+    overall_e2e:           ((kpis.e2e_conv || 0) * 100).toFixed(2),
+    stage_breakdown: {
+      stage1:  stages.stage1 || 0,
+      stage2:  stages.stage2 || 0,
+      stage3:  stages.stage3 || 0,
+      healthy: stages.healthy || 0,
+    },
+    top_degraders: [],
+    a2c_no_orders_terms: a2cNoOrders.slice(0,10).map(t => ({
+      term:      t.term_norm || t.term || '',
+      a2c_count: t.a2c_count || 0,
+    })),
+    category_funnel: (d35.categories || []).slice(0, 10).map(c => ({
+      category:          c.category,
+      searches:          c.searches,
+      visit_rate_pct:    (c.avg_visit_rate * 100).toFixed(1),
+      a2c_rate_pct:      (c.avg_a2c_rate * 100).toFixed(1),
+      purchase_rate_pct: (c.avg_purchase_rate * 100).toFixed(1),
+    })),
+  };
+}
+
+function buildCategoriesSummary(result) {
+  const d29 = result?.layer2?.['2.9'] || {};
+  const kpis = result?.kpis || {};
+
+  const categories = d29.categories || [];
+  const siteAvgE2e = ((kpis.e2e_conv || 0) * 100).toFixed(2);
+
+  const bestCat = [...categories].sort((a,b) => (b.a2c_rate_curr || 0) - (a.a2c_rate_curr || 0))[0];
+  const worstCat = [...categories].sort((a,b) => (a.a2c_rate_curr || 0) - (b.a2c_rate_curr || 0))[0];
+
+  return {
+    site_avg_e2e: siteAvgE2e,
+    category_data: categories.map(c => ({
+      category:       c.category,
+      searches:       c.searches,
+      mom_pct:        c.search_growth,
+      visit_rate_pct: c.avg_visit_rate ? (c.avg_visit_rate * 100).toFixed(1) : '0',
+      a2c_rate_pct:   (c.a2c_rate_curr * 100).toFixed(1),
+      e2e_pct:        c.e2e_conv ? (c.e2e_conv * 100).toFixed(2) : ((c.orders / Math.max(c.searches, 1)) * 100).toFixed(2),
+    })),
+    breakout_term:     result?.layer1?.['1.13']?.terms_300?.[0]?.term_norm || 'none',
+    breakout_searches: result?.layer1?.['1.13']?.terms_300?.[0]?.searches || 0,
+    best_conv_cat:     bestCat?.category || 'n/a',
+    best_conv_rate:    bestCat ? (bestCat.a2c_rate_curr * 100).toFixed(1) : '0',
+    worst_conv_cat:    worstCat?.category || 'n/a',
+    worst_conv_rate:   worstCat ? (worstCat.a2c_rate_curr * 100).toFixed(1) : '0',
+    worst_conv_searches: worstCat?.searches || 0,
+  };
+}
+
+const SUMMARY_BUILDERS = {
+  weekly_brief: buildWeeklyBriefSummary,
+  demand:       buildDemandSummary,
+  catalog_gaps: buildCatalogGapsSummary,
+  funnel:       buildFunnelSummary,
+  categories:   buildCategoriesSummary,
+};
+
+const INSIGHT_SECTIONS = [
+  {
+    key:      'weekly_brief',
+    title:    'Weekly brief',
+    subtitle: 'High-level WoW demand & funnel changes',
+    icon:     '⚡',
+  },
+  {
+    key:      'demand',
+    title:    'Demand signals',
+    subtitle: 'Rising/declining search terms',
+    icon:     '🔍',
+  },
+  {
+    key:      'catalog_gaps',
+    title:    'Catalog & relevance gaps',
+    subtitle: 'Zero-conversion terms & zero-cart long-tail gaps',
+    icon:     '⚠️',
+  },
+  {
+    key:      'funnel',
+    title:    'Funnel health',
+    subtitle: 'Where the search-to-purchase funnel is leaking',
+    icon:     '🔻',
+  },
+  {
+    key:      'categories',
+    title:    'Category intelligence',
+    subtitle: 'Which categories are winning and which need attention',
+    icon:     '📂',
+  },
+];
+
+const CARD_LAYERS = [
+  {
+    key:        'what_happened',
+    label:      'What happened',
+    labelColor: 'text-slate-700',
+    bgColor:    'bg-slate-50',
+    border:     'border-slate-200',
+    dot:        'bg-slate-400',
+  },
+  {
+    key:        'why_it_matters',
+    label:      'Why it matters',
+    labelColor: 'text-indigo-700',
+    bgColor:    'bg-indigo-50/50',
+    border:     'border-indigo-100',
+    dot:        'bg-indigo-400',
+  },
+  {
+    key:        'hidden_insight',
+    label:      'Hidden insight',
+    labelColor: 'text-violet-700',
+    bgColor:    'bg-violet-50/50',
+    border:     'border-violet-100',
+    dot:        'bg-violet-400',
+  },
+  {
+    key:        'action',
+    label:      'Action this week',
+    labelColor: 'text-emerald-700',
+    bgColor:    'bg-emerald-50/50',
+    border:     'border-emerald-100',
+    dot:        'bg-emerald-400',
+  },
+  {
+    key:        'opportunity_outlook',
+    label:      'Opportunity & Outlook',
+    labelColor: 'text-amber-700',
+    bgColor:    'bg-amber-50/50',
+    border:     'border-amber-100',
+    dot:        'bg-amber-400',
+  },
+];
+
+function InsightsModule({ result }) {
+  const [insights, setInsights] = useState({});
+  const [triggered, setTriggered] = useState(false);
+  const [activeSection, setActiveSection] = useState('weekly_brief');
+
+  useEffect(() => {
+    setInsights({});
+    setTriggered(false);
+    setActiveSection('weekly_brief');
+  }, [result]);
+
+  if (!result) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-2xl mb-3">📊</p>
+        <p className="text-sm font-medium text-gray-600">No data uploaded yet</p>
+        <p className="text-xs text-gray-400 mt-1">Upload a search CSV first to generate insights</p>
+      </div>
+    );
+  }
+
+  async function fetchInsight(section) {
+    setInsights(prev => ({
+      ...prev,
+      [section]: { status: 'loading', sections: {}, model: '' }
+    }));
+    try {
+      const builder = SUMMARY_BUILDERS[section];
+      const summary = builder(result);
+      const res     = await fetch('/generate-insight', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ section, summary }),
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setInsights(prev => ({
+          ...prev,
+          [section]: {
+            status:   'done',
+            sections: data.sections,
+            model:    data.model,
+          }
+        }));
+      } else {
+        setInsights(prev => ({
+          ...prev,
+          [section]: {
+            status: 'error',
+            error:  data.message || 'Unknown error',
+          }
+        }));
+      }
+    } catch (e) {
+      setInsights(prev => ({
+        ...prev,
+        [section]: { status: 'error', error: e.message }
+      }));
+    }
+  }
+
+  async function generateAll() {
+    setTriggered(true);
+    for (const section of INSIGHT_SECTIONS.map(s => s.key)) {
+      await fetchInsight(section);
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+
+  const activeState = insights[activeSection];
+  const activeIconInfo = INSIGHT_SECTIONS.find(s => s.key === activeSection);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">✨ AI Copilot Insights</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Generate natural language analyses of your search funnel and demand anomalies.</p>
+        </div>
+        {!triggered && (
+          <button onClick={generateAll} className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs px-4 py-2 rounded-lg transition shadow-md">
+            🚀 Generate All Insights
+          </button>
+        )}
+      </div>
+
+      {triggered && (
+        <div className="flex gap-2 border-b border-gray-200 overflow-x-auto pb-px">
+          {INSIGHT_SECTIONS.map(s => {
+            const state = insights[s.key];
+            const isLd = state?.status === 'loading';
+            const isDn = state?.status === 'done';
+            const isEr = state?.status === 'error';
+            return (
+              <button key={s.key} onClick={() => setActiveSection(s.key)}
+                className={`flex items-center gap-1.5 px-4 py-3 text-xs font-semibold border-b-2 transition-all whitespace-nowrap
+                  ${activeSection === s.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                <span>{s.icon}</span>
+                <span>{s.title}</span>
+                {isLd && <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />}
+                {isDn && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                {isEr && <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {triggered && activeState && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-2 space-y-4">
+            {activeState.status === 'loading' && (
+              <div className="bg-white border border-gray-200 rounded-xl p-12 text-center shadow-sm">
+                <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-sm font-medium text-gray-600">Analyzing data and generating narrative for {activeIconInfo?.title}...</p>
+              </div>
+            )}
+            {activeState.status === 'error' && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-6 shadow-sm">
+                <h3 className="font-bold text-sm">Failed to generate insights</h3>
+                <p className="text-xs mt-1">{activeState.error}</p>
+                <button onClick={() => fetchInsight(activeSection)} className="mt-3 bg-white border border-rose-300 text-rose-700 text-xs px-3 py-1.5 rounded-lg hover:bg-rose-100 transition">
+                  🔄 Retry Generation
+                </button>
+              </div>
+            )}
+            {activeState.status === 'done' && (
+              <div className="space-y-4">
+                {CARD_LAYERS.map(layer => {
+                  const text = activeState.sections[layer.key];
+                  if (!text) return null;
+                  return (
+                    <div key={layer.key} className={`p-5 rounded-xl border ${layer.bgColor} ${layer.border} shadow-sm transition-all hover:shadow-md`}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`w-2 h-2 rounded-full ${layer.dot}`} />
+                        <span className={`text-xs font-bold uppercase tracking-wider ${layer.labelColor}`}>{layer.label}</span>
+                      </div>
+                      <p className="text-sm text-gray-700 leading-relaxed font-medium">{text}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="xl:col-span-1">
+            <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-gray-900 border-b border-gray-100 pb-2 flex items-center gap-2">
+                <span>📋</span> Summary Indicators
+              </h3>
+              {activeState.status === 'done' && activeState.sections.summary_table?.length > 0 ? (
+                <div className="space-y-3">
+                  {activeState.sections.summary_table.map((row, i) => (
+                    <div key={i} className="text-xs p-3 bg-slate-50 border border-slate-100 rounded-lg space-y-1">
+                      <div className="font-semibold text-slate-700">{row.observation}</div>
+                      <div className="flex justify-between items-center text-[10px] text-gray-500 pt-1 border-t border-slate-100">
+                        <span className="font-mono bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded">{row.metric}</span>
+                        <span className="font-semibold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded">{row.impact}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeState.status === 'loading' ? (
+                <div className="text-xs text-gray-400 py-6 text-center">Loading indicators...</div>
+              ) : (
+                <div className="text-xs text-gray-400 py-6 text-center">No summary indicators returned.</div>
+              )}
+              {activeState.status === 'done' && (
+                <div className="text-[10px] text-gray-400 text-right pt-2 border-t border-gray-100">
+                  Model: <span className="font-medium">{activeState.model}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!triggered && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-12 text-center max-w-xl mx-auto shadow-sm">
+          <p className="text-2xl mb-3">🤖</p>
+          <h3 className="font-semibold text-gray-800 text-sm">Tap into AI product insights</h3>
+          <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">Generate a 5-layer analysis powered by Groq Llama 3.3 / Gemini, covering weekly briefs, search anomalies, catalog relevance issues, checkout leaks, and category growth profiles.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEASONALITY MODULE COMPONENTS AND HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function indexColor(v) {
+  if (v === null || v === undefined) return 'bg-slate-50';
+  if (v > 120) return 'bg-indigo-600';
+  if (v > 105) return 'bg-indigo-200';
+  if (v > 95)  return 'bg-slate-100';
+  if (v > 80)  return 'bg-rose-100';
+  return 'bg-rose-300';
+}
+
+function indexTextColor(v) {
+  if (v === null || v === undefined) return 'text-slate-400';
+  if (v > 120) return 'text-white';
+  if (v > 105) return 'text-indigo-950';
+  if (v > 95)  return 'text-slate-700';
+  if (v > 80)  return 'text-rose-950';
+  return 'text-rose-950';
+}
+
+function leaderGreen(index) {
+  // Darker green = stronger winning month, lighter green =
+  // a narrower win. Clamped between index 100 (just average)
+  // and 250 (extreme peak) for the gradient range.
+  const clamped  = Math.max(100, Math.min(250, index));
+  const t        = (clamped - 100) / 150;
+  const lightness = 72 - t * 32;  // ranges ~72% down to ~40%
+  return `hsl(142, 62%, ${lightness}%)`;
+}
+
+function MonthlyLeadersStrip({ months, monthlyLeaders }) {
+  const [hoverIdx, setHoverIdx] = useState(null);
+
+  if (!monthlyLeaders || monthlyLeaders.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="overflow-x-auto mb-8 px-5 pt-4">
+      <p className="text-xs text-gray-400 mb-2">
+        Top category by index each month — hover any cell to see the top 3
+      </p>
+      <table style={{ borderCollapse:'collapse', fontSize:'11px' }}>
+        <thead>
+          <tr>
+            <th style={{ padding:'6px 10px 6px 20px', textAlign:'left',
+                        minWidth:'120px' }}></th>
+            {months.map(m => (
+              <th key={m.id} style={{ padding:'6px 4px',
+                  fontWeight:500, color:'#6b7280',
+                  minWidth:'92px' }}>
+                {m.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{ padding:'4px 10px 4px 20px', fontWeight:500,
+                        color:'#374151' }}>
+              Top category
+            </td>
+            {monthlyLeaders.map((ml, i) => {
+              const winner = ml.top3[0];
+              if (!winner) {
+                return (
+                  <td key={i} style={{ padding:'10px 6px',
+                      textAlign:'center', color:'#9ca3af' }}>
+                    —
+                  </td>
+                );
+              }
+              return (
+                <td key={i}
+                    onMouseEnter={() => setHoverIdx(i)}
+                    onMouseLeave={() => setHoverIdx(null)}
+                    style={{
+                      padding: '8px 6px',
+                      textAlign: 'center',
+                      background: leaderGreen(winner.index),
+                      color: '#fff',
+                      fontWeight: 600,
+                      cursor: 'default',
+                      position: 'relative',
+                      borderRadius: '4px',
+                    }}>
+                  <div style={{ fontSize:'10px', lineHeight:'1.3' }}>
+                    {winner.category}
+                  </div>
+                  <div style={{ fontSize:'12px', marginTop:'2px' }}>
+                    {winner.index}
+                  </div>
+
+                  {hoverIdx === i && (
+                    <div style={{
+                      position:'absolute', bottom:'100%', left:'50%',
+                      transform:'translateX(-50%)', marginBottom:'6px',
+                      background:'#1e1b4b', color:'#fff',
+                      fontSize:'11px', padding:'8px 12px',
+                      borderRadius:'8px', whiteSpace:'nowrap',
+                      zIndex:50, textAlign:'left',
+                      boxShadow:'0 4px 12px rgba(0,0,0,0.25)',
+                    }}>
+                      <div style={{ fontWeight:600, marginBottom:'4px',
+                                    color:'#a5b4fc' }}>
+                        {ml.month_label}
+                      </div>
+                      {ml.top3.map((t, ti) => (
+                        <div key={ti} style={{
+                          padding:'2px 0',
+                          color: ti === 0 ? '#fff' : '#cbd5e1',
+                        }}>
+                          #{ti+1} {t.category} — {t.index}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </td>
+              );
+            })}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CategoryIndexView({ months, categories, monthlyLeaders }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+      <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+        <h3 className="text-sm font-semibold text-gray-800">Category Seasonality Index Heatmap</h3>
+        <p className="text-xs text-gray-400 mt-0.5">Normalized relative to each category's own annual average searches (100 = average).</p>
+      </div>
+      <div className="overflow-x-auto">
+        <MonthlyLeadersStrip months={months} monthlyLeaders={monthlyLeaders} />
+        <table className="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr className="bg-slate-50 border-b border-gray-100">
+              <th className="p-4 font-bold text-slate-500 uppercase tracking-wider min-w-[150px]">Category</th>
+              {months.map(m => (
+                <th key={m.id} className="p-4 font-bold text-slate-500 uppercase tracking-wider text-center">{m.label}</th>
+              ))}
+              <th className="p-4 font-bold text-slate-500 uppercase tracking-wider text-center">Peak Month</th>
+              <th className="p-4 font-bold text-slate-500 uppercase tracking-wider text-center">Trough Month</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {categories.map(cat => (
+              <tr key={cat.category} className="hover:bg-slate-50/50">
+                <td className="p-4 font-semibold text-gray-800">
+                  <div className="flex items-center gap-1.5">
+                    <span>{cat.category}</span>
+                    {!cat.reliable && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full"
+                        title={`Only ${cat.populated_months} month(s) of data — index not yet reliable`}>
+                        low data
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-normal">Avg: {fmt(cat.avg_monthly_searches)} searches</div>
+                </td>
+                {cat.monthly_index.map((idx, i) => (
+                  <td key={i} className="p-2 text-center">
+                    <div className={`py-2 px-1 rounded font-semibold transition-all shadow-sm ${indexColor(idx)} ${indexTextColor(idx)}`}
+                      title={`${fmt(cat.monthly_searches[i])} searches`}>
+                      {idx.toFixed(1)}
+                    </div>
+                  </td>
+                ))}
+                <td className="p-4 text-center">
+                  <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2.5 py-1 rounded-full font-bold">
+                    📈 {cat.peak_month} ({cat.peak_index}%)
+                  </span>
+                </td>
+                <td className="p-4 text-center">
+                  <span className="bg-rose-50 text-rose-700 border border-rose-100 px-2.5 py-1 rounded-full font-bold">
+                    📉 {cat.trough_month} ({cat.trough_index}%)
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="p-4 border-t border-gray-100 bg-slate-50/50 flex flex-wrap gap-4 text-[10px] justify-center">
+        <span className="font-semibold text-gray-500 uppercase">Legend:</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-indigo-600" /> Peak (&gt;120)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-indigo-200" /> Above Avg (105–120)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100 border border-gray-200" /> Average (95–105)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-100" /> Below Avg (80–95)</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-300" /> Trough (&lt;80)</span>
+      </div>
+    </div>
+  );
+}
+
+function YoyPatternView({ sameMonthYoy, transitionPatterns }) {
+  return (
+    <div className="space-y-6">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+          <h3 className="text-sm font-semibold text-gray-800">Same-Month Year-over-Year (YoY) Search Volumes</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Comparison of identical calendar months across consecutive years.</p>
+        </div>
+        {sameMonthYoy.length === 0 ? (
+          <div className="p-8 text-center text-xs text-gray-400">Not enough historical data to compute same-month YoY. Upload data spanning at least 13 months.</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {sameMonthYoy.map((block, i) => (
+              <div key={i} className="p-5 space-y-3">
+                <h4 className="text-xs font-bold text-indigo-600 flex items-center gap-2">
+                  <span>📅</span> {block.month_label} vs {block.compared_to}
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border border-gray-100 rounded-lg overflow-hidden">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-gray-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        <th className="p-3">Category</th>
+                        <th className="p-3 text-right">{block.compared_to} Searches</th>
+                        <th className="p-3 text-right">{block.month_label} Searches</th>
+                        <th className="p-3 text-center">YoY Growth</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {block.categories.map(c => {
+                        const isUp = c.pct_change > 0;
+                        return (
+                          <tr key={c.category} className="hover:bg-slate-50/30">
+                            <td className="p-3 font-semibold text-gray-800">{c.category}</td>
+                            <td className="p-3 text-right font-mono text-gray-500">{fmt(c.prev_searches)}</td>
+                            <td className="p-3 text-right font-mono text-gray-800">{fmt(c.curr_searches)}</td>
+                            <td className="p-3 text-center">
+                              <span className={`px-2 py-0.5 rounded font-bold ${isUp ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                {isUp ? '▲' : '▼'} {Math.abs(c.pct_change)}%
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+          <h3 className="text-sm font-semibold text-gray-800">Month-over-Month Transition Deviations</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Identifies categories that departed from last year's transition pattern (deviation &gt; 10pp).</p>
+        </div>
+        {transitionPatterns.length === 0 ? (
+          <div className="p-8 text-center text-xs text-gray-400">Not enough consecutive monthly data from multiple years to calculate MoM transition patterns.</div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {transitionPatterns.map((trans, idx) => {
+              const offPattern = trans.categories.filter(c => c.status === 'off_pattern');
+              const onPattern  = trans.categories.filter(c => c.status === 'on_pattern');
+
+              return (
+                <div key={idx} className="p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-800">
+                      🔄 Transition: {trans.transition_label} <span className="text-gray-400 font-normal ml-1">compared to prior year's {trans.prior_transition_label}</span>
+                    </h4>
+                  </div>
+
+                  {offPattern.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {offPattern.map(c => {
+                        const isHigh = c.deviation > 0;
+                        return (
+                          <div key={c.category} className="bg-rose-50/60 border border-rose-100 rounded-xl p-4 space-y-2 flex flex-col justify-between">
+                            <div className="flex items-start justify-between">
+                              <span className="text-xs font-bold text-rose-900 uppercase">⚠️ Pattern Deviation</span>
+                              <span className="text-[10px] bg-rose-200 text-rose-800 font-bold px-2 py-0.5 rounded-full uppercase">Off Pattern</span>
+                            </div>
+                            <div>
+                              <h5 className="text-sm font-bold text-rose-950">{c.category}</h5>
+                              <p className="text-xs text-rose-900/80 mt-1">
+                                Search volume transitioned by <strong className="text-rose-950 font-bold">{c.this_year_delta >= 0 ? '+' : ''}{c.this_year_delta}%</strong> this year.
+                                Last year, the same transition was <strong className="text-rose-950/70 font-semibold">{c.last_year_delta >= 0 ? '+' : ''}{c.last_year_delta}%</strong>.
+                              </p>
+                            </div>
+                            <div className="pt-2 border-t border-rose-200/50 flex justify-between items-center text-xs">
+                              <span className="text-rose-900/70 font-medium">Deviation:</span>
+                              <span className="font-bold text-rose-700 bg-rose-100/50 px-2 py-0.5 rounded">
+                                {c.deviation >= 0 ? '+' : ''}{c.deviation}pp {isHigh ? 'Stronger' : 'Weaker'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="bg-emerald-50/30 border border-emerald-100 text-emerald-800 rounded-xl p-4 text-xs font-medium flex items-center gap-2">
+                      <span>✓</span> All category transitions in this period aligned with last year's patterns (within 10pp).
+                    </div>
+                  )}
+
+                  {onPattern.length > 0 && (
+                    <details className="border border-gray-100 rounded-lg overflow-hidden">
+                      <summary className="text-[10px] font-bold text-gray-400 bg-slate-50/50 px-3 py-2 cursor-pointer hover:bg-slate-50 transition">
+                        👁 {onPattern.length} categories on pattern (expand to view)
+                      </summary>
+                      <div className="p-3 divide-y divide-gray-50 bg-white">
+                        {onPattern.map(c => (
+                          <div key={c.category} className="flex justify-between items-center py-2 text-xs">
+                            <span className="font-semibold text-slate-700">{c.category}</span>
+                            <div className="flex gap-4 font-medium text-slate-500">
+                              <span>This year: <strong>{c.this_year_delta >= 0 ? '+' : ''}{c.this_year_delta}%</strong></span>
+                              <span>Prior year: <strong>{c.last_year_delta >= 0 ? '+' : ''}{c.last_year_delta}%</strong></span>
+                              <span className="text-gray-400 font-normal">({c.deviation >= 0 ? '+' : ''}{c.deviation}pp diff)</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SeasonalityModule() {
+  const [indexData, setIndexData]   = useState(null);
+  const [yoyData,    setYoyData]    = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [activeTab,  setActiveTab]  = useState('index');
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetch('/category-index').then(r => r.json()),
+      fetch('/yoy-comparison').then(r => r.json()),
+    ]).then(([idx, yoy]) => {
+      setIndexData(idx);
+      setYoyData(yoy);
+      setLoading(false);
+    }).catch(e => {
+      console.error(e);
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-5 h-5 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!indexData?.months?.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-2xl mb-3">📅</p>
+        <p className="text-sm font-medium text-gray-600">No monthly seasonality data uploaded yet</p>
+        <p className="text-xs text-gray-400 mt-1">Please visit the <a href="/admin" className="text-indigo-600 hover:text-indigo-800 font-semibold underline">Admin page</a> to upload monthly search CSV files first.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">📅 Category Seasonality Index</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Explore monthly search volume indexes and year-over-year deviation flags.</p>
+        </div>
+        <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+          <button onClick={() => setActiveTab('index')}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all ${activeTab === 'index' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>
+            🌡 Seasonality Index Heatmap
+          </button>
+          <button onClick={() => setActiveTab('yoy')}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all ${activeTab === 'yoy' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>
+            🔄 YoY & Transition Patterns
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'index' && (
+        <CategoryIndexView months={indexData.months} categories={indexData.categories} monthlyLeaders={indexData.monthly_leaders} />
+      )}
+      {activeTab === 'yoy' && (
+        <YoyPatternView sameMonthYoy={yoyData?.same_month_yoy || []} transitionPatterns={yoyData?.transition_patterns || []} />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN APP
 // ─────────────────────────────────────────────────────────────────────────────
 const NAV = [
@@ -3763,7 +4719,10 @@ const NAV = [
   { id: 'layer2', label: '📂 Layer 2: Categories' },
   { id: 'layer3', label: '🔻 Layer 3: Funnel' },
   { id: 'layer4', label: '📈 Layer 4: Trends' },
+  { id: 'platform', label: '📱 App vs Web' },
   { id: 'trends', label: '📊 Weekly Trends' },
+  { id: 'insights', label: '✨ AI Insights' },
+  { id: 'seasonality', label: '📅 Seasonality' },
 ];
 
 function App() {
@@ -3785,7 +4744,7 @@ function App() {
     setResult(res);
   };
 
-  if (!result) return <UploadScreen onResult={handleSetResult} />;
+  if (!result || !result.summary) return <UploadScreen onResult={handleSetResult} />;
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -3794,12 +4753,19 @@ function App() {
           <span className="font-bold text-sm tracking-widest">SEARCH<span className="text-indigo-400">INTEL</span></span>
         </div>
         <nav className="flex-1 overflow-y-auto py-2">
-          {NAV.map(n => (
-            <button key={n.id} onClick={() => setTab(n.id)}
-              className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors ${tab===n.id?'bg-indigo-600 text-white':'text-slate-300 hover:bg-slate-800'}`}>
-              {n.label}
-            </button>
-          ))}
+          {NAV.map(n => {
+            const isPlatform = n.id === 'platform';
+            const disabled = isPlatform && !result.platform;
+            return (
+              <button key={n.id} disabled={disabled} onClick={() => !disabled && setTab(n.id)}
+                className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors ${disabled ? 'text-slate-600 cursor-not-allowed' : tab===n.id?'bg-indigo-600 text-white':'text-slate-300 hover:bg-slate-800'}`}>
+                {n.label}
+                {disabled && (
+                  <span className="text-slate-600 ml-1 text-xs">(no data)</span>
+                )}
+              </button>
+            );
+          })}
         </nav>
         <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-500">
           <p>{fmt(result.current_terms_processed)} terms · current</p>
@@ -3817,9 +4783,311 @@ function App() {
           {tab==='layer2' && <Layer2 layer2={result.layer2} />}
           {tab==='layer3' && <Layer3 layer3={result.layer3} />}
           {tab==='layer4' && <Layer4 trendsInputs={result.trends_inputs} />}
+          {tab === 'platform' && result.platform && !result.platform.error && <PlatformModule data={result.platform} />}
+          {tab === 'platform' && result.platform?.error && (
+            <div className="p-6 bg-rose-50 border border-rose-200 rounded-xl text-sm text-rose-700">
+              Could not process the platform file: {result.platform.error}
+            </div>
+          )}
           {tab==='trends' && <TrendsModule />}
+          {tab==='insights' && <InsightsModule result={result} />}
+          {tab==='seasonality' && <SeasonalityModule />}
         </main>
       </div>
+    </div>
+  );
+}
+
+function shareIndexColor(idx) {
+  const diff    = idx - 100;
+  const clamped = Math.max(-80, Math.min(80, diff));
+  if (clamped >= 0) {
+    const t = clamped / 80;
+    return `rgb(255,${Math.round(255-t*140)},${Math.round(255-t*220)})`;
+  }
+  const t = Math.abs(clamped) / 80;
+  return `rgb(${Math.round(255-t*200)},${Math.round(255-t*140)},255)`;
+}
+
+function PlatformTermTable({ rows, showShift }) {
+  if (!rows || rows.length === 0) {
+    return (
+      <p className="text-xs text-gray-400 py-4 text-center">
+        No terms matched
+      </p>
+    );
+  }
+  return (
+    <table className="w-full text-xs" style={{tableLayout:'fixed'}}>
+      <thead>
+        <tr className="text-gray-400 border-b border-gray-200">
+          <th className="text-left py-2 px-2">Term</th>
+          <th className="text-right py-2 px-2">Web</th>
+          <th className="text-right py-2 px-2">Android</th>
+          <th className="text-right py-2 px-2">iOS</th>
+          <th className="text-right py-2 px-2">App share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.term}
+              className="border-b border-gray-100 last:border-0">
+            <td className="py-2 px-2">
+              <span className="font-medium text-gray-700">
+                {r.term}
+              </span>
+              <span className="text-gray-400 text-xs block">
+                {r.category}
+              </span>
+            </td>
+            <td className="text-right py-2 px-2 text-gray-600">
+              {r.web_searches.toLocaleString()}
+            </td>
+            <td className="text-right py-2 px-2 text-gray-600">
+              {r.android_searches.toLocaleString()}
+            </td>
+            <td className="text-right py-2 px-2 text-gray-600">
+              {r.ios_searches.toLocaleString()}
+            </td>
+            <td className="text-right py-2 px-2 font-semibold
+                           text-gray-700">
+              {r.app_share_pct != null ? r.app_share_pct + '%' : '—'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ScorecardTile({ label, value, sub, tone }) {
+  const toneClass = {
+    neutral: 'bg-gray-50 text-gray-700',
+    good:    'bg-emerald-50 text-emerald-700',
+    bad:     'bg-rose-50 text-rose-700',
+  }[tone || 'neutral'];
+  return (
+    <div className={`rounded-lg p-4 ${toneClass}`}>
+      <p className="text-xs opacity-70 mb-1">{label}</p>
+      <p className="text-2xl font-bold">{value}</p>
+      {sub && <p className="text-xs opacity-60 mt-1">{sub}</p>}
+    </div>
+  );
+}
+
+function PartAView({ a }) {
+  return (
+    <div className="space-y-6">
+
+      <div className="grid grid-cols-2 gap-3">
+        <ScorecardTile
+          label="App share of searches"
+          value={a.avg_app_share_pct + '%'}
+          tone="neutral"
+        />
+        <ScorecardTile
+          label="Android share of App"
+          value={a.avg_android_share_of_app_pct + '%'}
+          tone="neutral"
+        />
+      </div>
+
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+          App-dominant terms
+        </h3>
+        <PlatformTermTable rows={a.app_dominant_terms}
+                            showShift={true} />
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+          Web-dominant terms
+        </h3>
+        <PlatformTermTable rows={a.web_dominant_terms}
+                            showShift={true} />
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+          Android / iOS imbalance outliers
+        </h3>
+        <p className="text-xs text-gray-400 mb-2">
+          Terms where the OS split deviates most from the site
+          average Android share of {a.avg_android_share_of_app_pct}%
+        </p>
+        <PlatformTermTable rows={a.os_imbalance_outliers}
+                            showShift={false} />
+      </div>
+
+    </div>
+  );
+}
+
+function PartBSection({ title, subtitle, rows }) {
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-sm font-semibold text-gray-700">
+          {title}
+        </h3>
+        <span className="text-xs bg-rose-50 text-rose-600
+                         px-2 py-0.5 rounded-full font-semibold">
+          {rows.length}
+        </span>
+      </div>
+      <p className="text-xs text-gray-400 mb-2">{subtitle}</p>
+      <PlatformTermTable rows={rows} showShift={false} />
+    </div>
+  );
+}
+
+function PartBView({ b }) {
+  return (
+    <div>
+      <PartBSection
+        title="Zero-conversion terms, App-skewed"
+        subtitle="High-traffic terms with zero orders (from 3.8) cross-referenced against platform split"
+        rows={b.zero_conv_app_skewed}
+      />
+      <PartBSection
+        title="Long-tail zero-cart terms, App-skewed"
+        subtitle="Specific-intent terms with zero add-to-cart (from 1.5) cross-referenced against platform split"
+        rows={b.zero_cart_app_skewed}
+      />
+      <PartBSection
+        title="Breakout terms — platform origin"
+        subtitle="This week's breakout terms (from 1.13), showing where the growth is actually coming from"
+        rows={b.breakout_app_origin}
+      />
+      <PartBSection
+        title="Degrading terms — App concentration"
+        subtitle="Terms with declining visit rate WoW (from 3.11), showing platform concentration of the decline"
+        rows={b.degraders_app_concentration}
+      />
+    </div>
+  );
+}
+
+function PartCView({ c }) {
+  const s = c.scorecard;
+  return (
+    <div className="space-y-6">
+
+      <div className="grid grid-cols-2 gap-3">
+        <ScorecardTile
+          label="App share of demand"
+          value={s.app_share_pct + '%'}
+          tone="neutral"
+        />
+        <ScorecardTile
+          label="Flagged App-skewed terms"
+          value={s.flagged_terms_count}
+          tone={s.flagged_terms_count > 10 ? 'bad' : 'neutral'}
+        />
+      </div>
+
+
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+          Category App-share rollup
+        </h3>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-gray-400 border-b border-gray-200">
+              <th className="text-left py-2">Category</th>
+              <th className="text-right py-2">App share</th>
+              <th className="text-right py-2">E2E conv</th>
+            </tr>
+          </thead>
+          <tbody>
+            {c.category_rollup.map(r => (
+              <tr key={r.category}
+                  className="border-b border-gray-100 last:border-0">
+                <td className="py-2 font-medium text-gray-700">
+                  {r.category}
+                </td>
+                <td className="text-right py-2">
+                  {r.app_share_pct}%
+                </td>
+                <td className="text-right py-2 text-gray-500">
+                  {r.e2e_conv_pct != null ? r.e2e_conv_pct + '%' : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">
+          Occasion cluster App-share rollup
+        </h3>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-gray-400 border-b border-gray-200">
+              <th className="text-left py-2">Cluster</th>
+              <th className="text-right py-2">App share</th>
+              <th className="text-right py-2">Matched terms</th>
+            </tr>
+          </thead>
+          <tbody>
+            {c.occasion_rollup.map(r => (
+              <tr key={r.cluster}
+                  className="border-b border-gray-100 last:border-0">
+                <td className="py-2 font-medium text-gray-700">
+                  {r.cluster}
+                </td>
+                <td className="text-right py-2">
+                  {r.app_share_pct}%
+                </td>
+                <td className="text-right py-2 text-gray-500">
+                  {r.matched_terms}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  );
+}
+
+function PlatformModule({ data }) {
+  const [section, setSection] = useState('a');
+  // 'a' | 'b' | 'c'
+  const a = data.part_a;
+  const b = data.part_b;
+  const c = data.part_c;
+
+  return (
+    <div className="max-w-5xl mx-auto py-6 px-4">
+
+      <div className="flex gap-0 mb-6 border border-gray-200
+                      rounded-lg overflow-hidden w-fit text-xs">
+        {[
+          { id:'a', label:'What\'s happening' },
+          { id:'b', label:'Where to focus' },
+          { id:'c', label:'Verdict' },
+        ].map(t => (
+          <button key={t.id} onClick={() => setSection(t.id)}
+            className={`px-4 py-2 font-medium border-r
+              border-gray-200 last:border-0
+              ${section===t.id
+                ? 'bg-indigo-600 text-white'
+                : 'bg-white text-gray-600 hover:bg-indigo-50'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {section === 'a' && <PartAView a={a} />}
+      {section === 'b' && <PartBView b={b} />}
+      {section === 'c' && <PartCView c={c} />}
+
     </div>
   );
 }

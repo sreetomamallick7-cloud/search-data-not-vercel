@@ -12,9 +12,17 @@ load_dotenv(os.path.join(os.getcwd(), '.env.local'), override=True)
 
 import layer12_logic
 import layer4_trends_logic
+from insights_utils import generate_insight
+import platform_logic
+from platform_logic import parse_platform_csv
 
 app = Flask(__name__, static_folder='static')
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50MB limit
+
+DEVIATION_THRESHOLD = 10  # percentage points — tune as needed
+# Used by /yoy-comparison to classify a category's month-to-month
+# transition as "on pattern" vs "off pattern" relative to last
+# year's equivalent transition.
 
 from category_utils import get_category
 
@@ -173,7 +181,7 @@ def process_period_files(search_df, a2c_df):
             len(words) >= 3 or
             any(m in words for m in SPECIFICITY_MARKERS)
         )
-        return bool(below_median and specific)
+        return bool(specific)
 
     merged['is_long_tail'] = merged.apply(_is_long_tail, axis=1) if not merged.empty else pd.Series(dtype=bool)
 
@@ -225,6 +233,42 @@ def upload():
             'zero_conv_terms': zero_conv[['term_norm','searches','category']].to_dict(orient='records'),
         }
 
+        # ── NEW: Platform Split (App vs Web) — fully optional ──────────
+        platform_result = None
+        if 'platform_terms_current' in files:
+            try:
+                platform_curr_df = parse_platform_csv(
+                    files['platform_terms_current']
+                )
+                platform_prev_df = None
+                if 'platform_terms_previous' in files:
+                    platform_prev_df = parse_platform_csv(
+                        files['platform_terms_previous']
+                    )
+
+                zero_conv_list = layer3.get('3.8', {}).get('terms', [])
+                zero_cart_list = layer1.get('1.5', {}).get('zero_cart_terms', [])
+                breakout_list  = layer1.get('1.13', {}).get('terms_300', []) + layer1.get('1.13', {}).get('terms_100', [])
+                degrader_list  = layer3.get('3.11', {}).get('degraders', [])
+                category_list  = layer3.get('3.5', {}).get('categories', [])
+                occ_clusters   = (
+                    layer1.get('1.6', {}).get('occasion_clusters', []) +
+                    layer1.get('1.6', {}).get('use_case_clusters', [])
+                )
+
+                platform_result = platform_logic.run_platform_analysis(
+                    df_curr, platform_curr_df,
+                    df_prev=df_prev, platform_prev=platform_prev_df,
+                    zero_conv_terms=zero_conv_list,
+                    zero_cart_terms=zero_cart_list,
+                    breakout_terms=breakout_list,
+                    degrader_terms=degrader_list,
+                    category_funnel=category_list,
+                    occasion_clusters=occ_clusters,
+                )
+            except Exception as e:
+                platform_result = {'error': str(e)}
+
         response_data = {
             "status": "success",
             "current_terms_processed": len(df_curr),
@@ -233,7 +277,8 @@ def upload():
             "layer1": layer1,
             "layer2": layer2,
             "layer3": layer3,
-            "trends_inputs": trends_inputs
+            "trends_inputs": trends_inputs,
+            "platform": platform_result,
         }
 
         return jsonify(response_data)
@@ -350,6 +395,31 @@ def trends_test():
 def trends():
     """Deprecated legacy endpoint, redirected to new SerpApi logic if needed."""
     return api_trends()
+
+@app.route('/generate-insight', methods=['POST'])
+def insight_route():
+    body    = request.json or {}
+    section = body.get('section', '')
+    summary = body.get('summary', {})
+
+    if not section:
+        return jsonify({'status':'error',
+                        'message':'section required'}), 400
+    if not summary:
+        return jsonify({'status':'error',
+                        'message':'summary required'}), 400
+
+    result = generate_insight(section, summary)
+
+    if result.get('error') and not result.get('sections'):
+        return jsonify({'status':  'error',
+                        'message': result['error']}), 500
+
+    return jsonify({
+        'status':   'success',
+        'sections': result['sections'],
+        'model':    result['model'],
+    })
 
 import db as supabase_db
 import math
@@ -747,6 +817,394 @@ def trends_material():
         })
     except Exception as e:
         return jsonify({'status':'error','message':str(e)}), 400
+
+# ── Seasonality routes ────────────────────────────────────────────────
+
+import calendar as calendar_mod
+
+@app.route('/admin/upload-month', methods=['POST'])
+def admin_upload_month():
+    if request.form.get('password') != os.environ.get('ADMIN_PASSWORD'):
+        return jsonify({'status':'error','message':'Unauthorized'}), 401
+
+    month_value = request.form.get('month_value', '').strip()
+    # Expected format "YYYY-MM" from <input type="month">
+    if not month_value or '-' not in month_value:
+        return jsonify({'status':'error',
+                        'message':'Valid month required'}), 400
+
+    try:
+        cal_year, cal_month = month_value.split('-')
+        cal_year  = int(cal_year)
+        cal_month = int(cal_month)
+    except ValueError:
+        return jsonify({'status':'error',
+                        'message':'Invalid month format'}), 400
+
+    label = f"{calendar_mod.month_abbr[cal_month]} {cal_year}"
+    # e.g. "Apr 2025"
+
+    files = request.files
+    try:
+        search_curr = safe_read_csv(
+            files['search_terms'], 'search_terms.csv'
+        ) if 'search_terms' in files else None
+        a2c_curr = safe_read_csv(
+            files['a2c'], 'a2c.csv'
+        ) if 'a2c' in files else None
+
+        df = process_period_files(search_curr, a2c_curr)
+        if df is None or df.empty:
+            return jsonify({'status':'error',
+                            'message':'No data processed'}), 400
+
+        import numpy as np
+        df['visit_rate']    = (df['search_visits'] /
+                               df['searches'].replace(0, np.nan)
+                               ).fillna(0).round(4)
+        df['a2c_rate_s']    = (df['a2c_count'] /
+                               df['searches'].replace(0, np.nan)
+                               ).fillna(0).round(4)
+        df['purchase_rate'] = (df['orders'] /
+                               df['a2c_count'].replace(0, np.nan)
+                               ).fillna(0).round(4)
+        df['e2e_conv']      = (df['orders'] /
+                               df['searches'].replace(0, np.nan)
+                               ).fillna(0).round(6)
+
+        client = supabase_db.get_client()
+
+        # Reject duplicate month upload — must delete first
+        existing = client.table('months') \
+                         .select('id') \
+                         .eq('calendar_month', cal_month) \
+                         .eq('calendar_year',  cal_year) \
+                         .execute()
+        if existing.data:
+            return jsonify({'status':'error',
+                'message': f'{label} already uploaded — delete '
+                           f'it first if you want to re-upload'
+            }), 400
+
+        month_row = client.table('months').insert({
+            'label':          label,
+            'calendar_month': cal_month,
+            'calendar_year':  cal_year,
+            'total_terms':    int(len(df)),
+            'total_searches': int(df['searches'].sum()),
+            'total_orders':   int(df['orders'].sum()),
+        }).execute()
+        month_id = month_row.data[0]['id']
+
+        records = []
+        for _, row in df.iterrows():
+            records.append({
+                'month_id':      month_id,
+                'term_norm':     str(row['term_norm']),
+                'category':      str(row.get('category', '')),
+                'searches':      int(row.get('searches', 0)),
+                'search_visits': int(row.get('search_visits', 0)),
+                'a2c_count':     int(row.get('a2c_count', 0)),
+                'orders':        int(row.get('orders', 0)),
+                'usd_revenue':   float(row.get('usd_revenue', 0)),
+                'visit_rate':    float(row.get('visit_rate', 0)),
+                'a2c_rate_s':    float(row.get('a2c_rate_s', 0)),
+                'purchase_rate': float(row.get('purchase_rate', 0)),
+                'e2e_conv':      float(row.get('e2e_conv', 0)),
+                'is_long_tail':  bool(row.get('is_long_tail', False)),
+            })
+
+        CHUNK = 500
+        for i in range(0, len(records), CHUNK):
+            client.table('search_terms_monthly').insert(
+                records[i:i+CHUNK]
+            ).execute()
+
+        return jsonify({
+            'status': 'success',
+            'month_id': month_id,
+            'label': label,
+            'terms_uploaded': len(records),
+        })
+
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 400
+
+
+@app.route('/months', methods=['GET'])
+def get_months():
+    try:
+        client = supabase_db.get_client()
+        result = client.table('months').select('*') \
+                       .order('calendar_year', desc=False) \
+                       .order('calendar_month', desc=False) \
+                       .execute()
+        return jsonify({'status':'success', 'months': result.data})
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 400
+
+
+@app.route('/admin/delete-month/<int:month_id>', methods=['DELETE'])
+def admin_delete_month(month_id):
+    if request.json.get('password') != os.environ.get('ADMIN_PASSWORD'):
+        return jsonify({'status':'error','message':'Unauthorized'}), 401
+    try:
+        client = supabase_db.get_client()
+        client.table('months').delete().eq('id', month_id).execute()
+        return jsonify({'status':'success', 'deleted_month_id': month_id})
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 400
+
+
+MIN_MONTHS_FOR_INDEX = 3
+# Below this many populated months, the index isn't meaningful —
+# flagged as unreliable rather than hidden, so partial data is
+# still visible but clearly marked as not-yet-trustworthy.
+
+@app.route('/category-index', methods=['GET'])
+def category_index():
+    try:
+        client = supabase_db.get_client()
+
+        months_result = client.table('months').select('*') \
+                               .order('calendar_year', desc=False) \
+                               .order('calendar_month', desc=False) \
+                               .execute()
+        months = months_result.data
+        if not months:
+            return jsonify({'status':'success', 'months':[],
+                            'categories':[]})
+
+        month_ids = [m['id'] for m in months]
+
+        # ── Aggregation happens IN POSTGRES, not in Python ──────
+        # Avoids Supabase's default 1000-row response cap — only
+        # the already-summed (month × category) rows come back,
+        # not the ~25,000 raw term rows per month underneath.
+        agg_result = client.rpc(
+            'get_monthly_category_totals',
+            {'p_month_ids': month_ids}
+        ).execute()
+        agg_rows = agg_result.data
+
+        if not agg_rows:
+            return jsonify({'status':'success', 'months': months,
+                            'categories':[]})
+
+        month_index = {m['id']: i for i, m in enumerate(months)}
+        n_months = len(months)
+
+        cat_series = {}
+        for row in agg_rows:
+            cat = row['category']
+            mid = row['month_id']
+            if cat not in cat_series:
+                cat_series[cat] = [0] * n_months
+            if mid in month_index:
+                cat_series[cat][month_index[mid]] = int(
+                    row['total_searches']
+                )
+
+        categories_out = []
+        for cat, series in cat_series.items():
+            if not cat or cat in ('nan', 'Uncategorized'):
+                continue
+            populated_months = sum(1 for s in series if s > 0)
+            avg = sum(series) / max(len(series), 1)
+            if avg == 0:
+                continue
+
+            index_series = [round(s / avg * 100, 1) for s in series]
+            peak_i   = index_series.index(max(index_series))
+            trough_i = index_series.index(min(index_series))
+
+            categories_out.append({
+                'category':             cat,
+                'monthly_searches':     series,
+                'monthly_index':        index_series,
+                'avg_monthly_searches': round(avg, 0),
+                'populated_months':     populated_months,
+                'reliable': (populated_months >= MIN_MONTHS_FOR_INDEX),
+                'peak_month':           months[peak_i]['label'],
+                'peak_index':           index_series[peak_i],
+                'trough_month':         months[trough_i]['label'],
+                'trough_index':         index_series[trough_i],
+            })
+
+        categories_out.sort(
+            key=lambda c: max(c['monthly_searches']), reverse=True
+        )
+
+        # ── Monthly Leaders ──────────────────────────────────────────
+        # For each month, rank categories by THAT month's index value
+        # and keep the top 3. This is a transpose of the existing
+        # per-category data — categories_out already has monthly_index
+        # arrays aligned to the `months` list, so this just reads across
+        # them at each month position instead of down each category's row.
+        #
+        # Only categories flagged reliable (populated_months >=
+        # MIN_MONTHS_FOR_INDEX) are eligible to "win" a month — this
+        # prevents a brand-new category with only 1-2 months of history
+        # from topping the leaderboard off a single inflated data point.
+
+        reliable_cats = [c for c in categories_out if c['reliable']]
+
+        monthly_leaders = []
+        for i, m in enumerate(months):
+            ranked = sorted(
+                reliable_cats,
+                key=lambda c: c['monthly_index'][i],
+                reverse=True
+            )
+            top3 = [
+                {'category': c['category'], 'index': c['monthly_index'][i]}
+                for c in ranked[:3]
+            ]
+            monthly_leaders.append({
+                'month_label': m['label'],
+                'top3':        top3,
+            })
+
+        return jsonify({
+            'status':              'success',
+            'months':              months,
+            'categories':          categories_out,
+            'monthly_leaders':     monthly_leaders,
+            'min_months_required': MIN_MONTHS_FOR_INDEX,
+        })
+
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 400
+
+
+@app.route('/yoy-comparison', methods=['GET'])
+def yoy_comparison():
+    try:
+        import pandas as pd
+        client = supabase_db.get_client()
+
+        months_result = client.table('months').select('*') \
+                               .order('calendar_year', desc=False) \
+                               .order('calendar_month', desc=False) \
+                               .execute()
+        months = months_result.data
+        if len(months) < 2:
+            return jsonify({'status':'success',
+                            'same_month_yoy': [],
+                            'transition_patterns': []})
+
+        month_ids = [m['id'] for m in months]
+        terms_result = client.table('search_terms_monthly') \
+                             .select('month_id,category,searches') \
+                             .in_('month_id', month_ids) \
+                             .execute()
+        df = pd.DataFrame(terms_result.data)
+        agg = df.groupby(['category','month_id'])['searches'] \
+                .sum().reset_index()
+
+        month_lookup = {
+            (m['calendar_month'], m['calendar_year']): m
+            for m in months
+        }
+        cat_month_search = {
+            (row['category'], row['month_id']): row['searches']
+            for _, row in agg.iterrows()
+        }
+        all_categories = sorted(
+            c for c in set(agg['category']) if c and c != 'nan'
+        )
+
+        # ── Same-month YoY ──────────────────────────────────────
+        same_month_yoy = []
+        seen = set()
+        for m in months:
+            cm, cy = m['calendar_month'], m['calendar_year']
+            prev_key = (cm, cy - 1)
+            if prev_key in month_lookup and (cm, cy) not in seen:
+                seen.add((cm, cy))
+                prev_m = month_lookup[prev_key]
+                cat_deltas = []
+                for cat in all_categories:
+                    curr_s = cat_month_search.get((cat, m['id']), 0)
+                    prev_s = cat_month_search.get((cat, prev_m['id']), 0)
+                    if prev_s == 0:
+                        continue
+                    pct = round((curr_s - prev_s) / prev_s * 100, 1)
+                    cat_deltas.append({
+                        'category':      cat,
+                        'curr_searches': int(curr_s),
+                        'prev_searches': int(prev_s),
+                        'pct_change':    pct,
+                    })
+                cat_deltas.sort(key=lambda x: x['pct_change'],
+                                reverse=True)
+                same_month_yoy.append({
+                    'month_label':  m['label'],
+                    'compared_to':  prev_m['label'],
+                    'categories':   cat_deltas,
+                })
+
+        # ── Transition pattern comparison ───────────────────────
+        transition_patterns = []
+        for i in range(len(months) - 1):
+            m_a, m_b = months[i], months[i+1]
+
+            exp_month = m_a['calendar_month'] + 1
+            exp_year  = m_a['calendar_year']
+            if exp_month > 12:
+                exp_month = 1
+                exp_year += 1
+            if not (m_b['calendar_month'] == exp_month and
+                    m_b['calendar_year']  == exp_year):
+                continue  # not a true consecutive pair, skip
+
+            prior_a_key = (m_a['calendar_month'], m_a['calendar_year']-1)
+            prior_b_key = (m_b['calendar_month'], m_b['calendar_year']-1)
+            if prior_a_key not in month_lookup or \
+               prior_b_key not in month_lookup:
+                continue
+
+            prior_a = month_lookup[prior_a_key]
+            prior_b = month_lookup[prior_b_key]
+
+            cat_results = []
+            for cat in all_categories:
+                this_a = cat_month_search.get((cat, m_a['id']), 0)
+                this_b = cat_month_search.get((cat, m_b['id']), 0)
+                last_a = cat_month_search.get((cat, prior_a['id']), 0)
+                last_b = cat_month_search.get((cat, prior_b['id']), 0)
+                if this_a == 0 or last_a == 0:
+                    continue
+                this_delta = round((this_b - this_a) / this_a * 100, 1)
+                last_delta = round((last_b - last_a) / last_a * 100, 1)
+                deviation  = round(this_delta - last_delta, 1)
+                status = ('off_pattern'
+                          if abs(deviation) > DEVIATION_THRESHOLD
+                          else 'on_pattern')
+                cat_results.append({
+                    'category':        cat,
+                    'this_year_delta': this_delta,
+                    'last_year_delta': last_delta,
+                    'deviation':       deviation,
+                    'status':          status,
+                })
+            cat_results.sort(key=lambda x: abs(x['deviation']),
+                             reverse=True)
+
+            transition_patterns.append({
+                'transition_label':       f"{m_a['label']} → {m_b['label']}",
+                'prior_transition_label': f"{prior_a['label']} → {prior_b['label']}",
+                'categories':             cat_results,
+            })
+
+        return jsonify({
+            'status': 'success',
+            'same_month_yoy':      same_month_yoy,
+            'transition_patterns': transition_patterns,
+        })
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}), 400
+
 
 if __name__ == '__main__':
     app.run(port=5001, debug=True)

@@ -296,7 +296,7 @@ def run_layer1(df_curr, df_prev):
     # funnel breaks (low visit = search not surfacing it;
     # ok visit + 0 a2c = catalog gap).
     zero_cart = lt[
-        (lt['a2c_count'] == 0) & (lt['searches'] >= 200)
+        lt['a2c_count'] == 0
     ].copy()
 
     zero_cart['visit_rate'] = (

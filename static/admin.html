@@ -61,6 +61,36 @@
     <tbody id="weeksList"></tbody>
   </table>
 
+  <h2 style="margin-top:48px">Upload monthly data (seasonality)</h2>
+
+  <label>Admin password</label>
+  <input type="password" id="pwdMonth"
+         placeholder="Enter admin password" />
+
+  <label>Month</label>
+  <input type="month" id="monthPicker" />
+
+  <label>Search terms CSV</label>
+  <input type="file" id="search_file_month" accept=".csv" />
+
+  <label>A2C CSV</label>
+  <input type="file" id="a2c_file_month" accept=".csv" />
+
+  <button id="uploadMonthBtn" onclick="uploadMonth()">
+    Upload month
+  </button>
+  <div id="statusMonth"></div>
+
+  <h2 style="margin-top:40px">Uploaded months</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Label</th><th>Terms</th><th>Searches</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="monthsList"></tbody>
+  </table>
+
   <script>
     async function uploadWeek() {
       const btn = document.getElementById('uploadBtn');
@@ -167,7 +197,80 @@
       }
     }
 
+    async function uploadMonth() {
+      const btn    = document.getElementById('uploadMonthBtn');
+      const status = document.getElementById('statusMonth');
+      btn.disabled = true;
+      status.style.display = 'none';
+
+      const monthVal = document.getElementById('monthPicker').value;
+      // monthVal format: "2025-04"
+      if (!monthVal) {
+        status.className = 'err';
+        status.style.display = 'block';
+        status.textContent = 'Please select a month';
+        btn.disabled = false;
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('password', document.getElementById('pwdMonth').value);
+      fd.append('month_value', monthVal);
+      const sf = document.getElementById('search_file_month').files[0];
+      const af = document.getElementById('a2c_file_month').files[0];
+      if (sf) fd.append('search_terms', sf);
+      if (af) fd.append('a2c', af);
+
+      try {
+        const res  = await fetch('/admin/upload-month',
+                                  { method: 'POST', body: fd });
+        const data = await res.json();
+        status.style.display = 'block';
+        if (data.status === 'success') {
+          status.className = 'ok';
+          status.textContent =
+            `Uploaded "${data.label}" — ${data.terms_uploaded} terms`;
+          loadMonths();
+        } else {
+          status.className = 'err';
+          status.textContent = 'Error: ' + data.message;
+        }
+      } catch(e) {
+        status.className = 'err';
+        status.style.display = 'block';
+        status.textContent = 'Network error: ' + e.message;
+      }
+      btn.disabled = false;
+    }
+
+    async function loadMonths() {
+      const res  = await fetch('/months');
+      const data = await res.json();
+      const tbody = document.getElementById('monthsList');
+      tbody.innerHTML = (data.months || []).map(m => `
+        <tr>
+          <td>${m.label}</td>
+          <td>${(m.total_terms || 0).toLocaleString()}</td>
+          <td>${(m.total_searches || 0).toLocaleString()}</td>
+          <td><button class="del"
+                onclick="deleteMonth(${m.id}, '${m.label}')">
+              delete</button></td>
+        </tr>`).join('');
+    }
+
+    async function deleteMonth(id, label) {
+      const pwd = document.getElementById('pwdMonth').value;
+      if (!confirm(`Delete "${label}"? This cannot be undone.`)) return;
+      await fetch(`/admin/delete-month/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pwd })
+      });
+      loadMonths();
+    }
+
     loadWeeks();
+    loadMonths();
   </script>
 </body>
 </html>
